@@ -219,4 +219,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-data
+data/actual_generation_per_production_type.csv
+data/total_load_day_ahead_actual/chunks
