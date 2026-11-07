@@ -1,0 +1,174 @@
+"""HTTP API for the demand and production forecasters.
+
+Run from the repo root:
+    uvicorn predictions.api:app --reload --port 8000
+Interactive docs: http://localhost:8000/docs
+
+Endpoints
+    GET  /health                 model status, latest data, allowed forecast window
+    POST /forecast/demand        demand forecast
+    POST /forecast/production    solar / wind / total production forecast
+    POST /forecast               both, merged per timestamp
+
+Request body (either `timestamps`, or `start` + `end`):
+    {"timestamps": [1794050100, "2026-11-08T18:00:00Z"], "issued_at": null}
+    {"start": "2026-11-08T00:00:00Z", "end": "2026-11-09T00:00:00Z"}
+Timestamps are unix seconds (or milliseconds, auto-detected) or ISO-8601 strings
+(naive = UTC), snapped down to the 15-min grid.
+`issued_at` (the forecast's "now") defaults to just after the latest known data.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field, model_validator
+
+from predictions.core import MAX_LEAD_STEPS, STEP, load_data
+from predictions.demand_model import DemandForecaster
+from predictions.production_model import ProductionForecaster
+
+MAX_POINTS = 5000
+MS_THRESHOLD = 10**11          # integers above this are milliseconds (10**11 s is the year 5138)
+Stamp = int | datetime
+
+MODELS: dict[str, DemandForecaster | ProductionForecaster] = {}
+LOAD_ERRORS: dict[str, str] = {}
+
+
+def _load_models() -> None:
+    MODELS.clear()
+    LOAD_ERRORS.clear()
+    data = load_data()
+    models_dir = os.environ.get("PREDICTIONS_MODELS_DIR")   # optional override of predictions/models
+    for key, cls in (("demand", DemandForecaster), ("production", ProductionForecaster)):
+        path = Path(models_dir) / f"{cls.NAME}.pkl" if models_dir else cls.default_path()
+        try:
+            MODELS[key] = cls.load(path, data=data)
+        except FileNotFoundError:
+            LOAD_ERRORS[key] = (f"{path} not found - run "
+                                "predictions/train_and_evaluate.ipynb to train and save it")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _load_models()
+    yield
+
+
+app = FastAPI(title="Energy forecast API", version="1.0", lifespan=lifespan,
+              description="Demand and production forecasts for any 15-min timestamps up to 7 days ahead.")
+
+
+# --------------------------------------------------------------------------- #
+class ForecastRequest(BaseModel):
+    timestamps: list[Stamp] | None = Field(None, description="unix seconds or ISO-8601 (naive = UTC)")
+    start: Stamp | None = Field(None, description="range start (inclusive), alternative to timestamps")
+    end: Stamp | None = Field(None, description="range end (exclusive)")
+    issued_at: Stamp | None = Field(None, description="forecast 'now'; default = just after latest data")
+    allow_fetch: bool = Field(True, description="fetch live weather forecasts if needed")
+
+    @model_validator(mode="after")
+    def _check(self):
+        if (self.timestamps is None) == (self.start is None or self.end is None):
+            raise ValueError("give either `timestamps` or both `start` and `end`")
+        return self
+
+
+def _unix(x: Stamp) -> int:
+    if isinstance(x, datetime):
+        if x.tzinfo is None:
+            x = x.replace(tzinfo=timezone.utc)
+        return int(x.timestamp())
+    x = int(x)
+    return x // 1000 if abs(x) > MS_THRESHOLD else x   # milliseconds (e.g. JS Date.now())
+
+
+def _iso(ts: int) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _timestamps(req: ForecastRequest) -> np.ndarray:
+    if req.timestamps is not None:
+        n = len(req.timestamps)
+    else:
+        start = -(-_unix(req.start) // STEP) * STEP          # round up to the 15-min grid
+        end = _unix(req.end)
+        n = max(0, -(-(end - start) // STEP))
+    if n == 0:
+        raise HTTPException(422, "no timestamps in request (empty list, or end <= start)")
+    if n > MAX_POINTS:
+        raise HTTPException(422, f"at most {MAX_POINTS} timestamps per request (got {n})")
+    if req.timestamps is not None:
+        return np.array([_unix(t) for t in req.timestamps], dtype="int64")
+    return np.arange(start, end, STEP, dtype="int64")
+
+
+def _model(key: str):
+    if key not in MODELS:
+        raise HTTPException(503, LOAD_ERRORS.get(key, f"{key} model not loaded"))
+    return MODELS[key]
+
+
+def _run(key: str, req: ForecastRequest) -> tuple[pd.DataFrame, int]:
+    model = _model(key)
+    issued = model.last_known_ts + STEP if req.issued_at is None else _unix(req.issued_at)
+    try:
+        df = model.predict(_timestamps(req), issued_at=issued, allow_fetch=req.allow_fetch)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return df, (issued // STEP) * STEP
+
+
+def _response(key: str, df: pd.DataFrame, issued: int) -> dict:
+    df = df.assign(time_utc=[_iso(int(t)) for t in df.timestamp])
+    return {
+        "model": key,
+        "issued_at": issued,
+        "issued_at_utc": _iso(issued),
+        "count": len(df),
+        "predictions": json.loads(df.to_json(orient="records")),
+    }
+
+
+# --------------------------------------------------------------------------- #
+@app.get("/health")
+def health() -> dict:
+    out = {"status": "ok" if len(MODELS) == 2 else "degraded", "errors": LOAD_ERRORS, "models": {}}
+    now = int(datetime.now(timezone.utc).timestamp())
+    for key, m in MODELS.items():
+        issued = m.last_known_ts + STEP
+        out["models"][key] = {
+            "latest_data_utc": _iso(m.last_known_ts),
+            "data_age_hours": round((now - issued) / 3600, 1),
+            "default_issued_at": issued,
+            "forecast_window_utc": [_iso(issued), _iso(issued + (MAX_LEAD_STEPS - 1) * STEP)],
+        }
+    return out
+
+
+@app.post("/forecast/demand")
+def forecast_demand(req: ForecastRequest) -> dict:
+    return _response("demand", *_run("demand", req))
+
+
+@app.post("/forecast/production")
+def forecast_production(req: ForecastRequest) -> dict:
+    return _response("production", *_run("production", req))
+
+
+@app.post("/forecast")
+def forecast_both(req: ForecastRequest) -> dict:
+    d, issued = _run("demand", req)
+    p, _ = _run("production", req)
+    # same timestamps in the same order -> join by position (safe with duplicate timestamps)
+    extra = p.drop(columns=["timestamp", "time_utc", "lead_hours", "weather_source"])
+    merged = pd.concat([d.reset_index(drop=True), extra.reset_index(drop=True)], axis=1)
+    return _response("demand+production", merged, issued)
