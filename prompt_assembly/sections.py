@@ -1,6 +1,9 @@
 """Fixed prompt text: sections 1–6 (rules) and the closing instruction.
 
-Written from the project plan (sections 2, 4–6). Includes the plan's fixes:
+Written from the project plan (sections 2, 4–6); the plan's original break-even
+prompt was not available. Section 4 is a step-by-step procedure over labels
+(price zone, cheap, surplus left) because qwen3:4b followed that far more
+reliably than prose rules. Includes the plan's fixes:
 - every "up to" limit is for one 15-minute interval (fix 1, see examples.py);
 - an optional "break-even before next refill" number (fix 3);
 - the energy balance includes curtailment (fix 4).
@@ -56,8 +59,8 @@ Step 1. Start from the price zone. A positive matching fraction is a SURPLUS, a 
   BELOW      | the matching fraction: store the surplus  | 0.00: keep stored energy for later
 Step 2. If price cheap = YES and the zone is BELOW or NEAR: use the "charge up to" value instead
   (buying cheap energy is worth it).
-Step 3. If the objective is "use own energy first": use the matching fraction instead, unless step 2
-  applies.
+Step 3. If the objective is "use own energy first": REPLACE the step 1 value with the matching
+  fraction (this overrides the table). Step 2 still comes before it.
 Step 4. Hard goals in USER GOALS come first: if a goal says "battery_fraction >= X", use at least X.
   If a "never sell below" goal is BLOCKED, do not discharge more than the deficit needs.
 Step 5. If uncertainty is HIGH, keep the value between -0.50 and 0.50 (1.00 becomes 0.50), unless
@@ -77,7 +80,8 @@ OUTPUT = """\
 6. CONFIDENCE AND OUTPUT
 - confidence: "high" for a clear case, "medium" when the price is close to break-even or
   uncertainty is MEDIUM, "low" when signals conflict or uncertainty is HIGH.
-- reasoning: walk through the steps like the examples do, naming the numbers you used.
+- reasoning: walk through the steps once, like the examples do: one short sentence per step, naming
+  the numbers you used. Never go back to an earlier step; the later step always wins.
 - explanation_for_operator: one plain sentence for the dashboard. Use only numbers that appear in
   the situation; do not compute new ones (no MW values from fractions)."""
 

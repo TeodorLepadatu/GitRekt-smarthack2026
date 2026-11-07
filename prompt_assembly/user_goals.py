@@ -21,10 +21,7 @@ HEADER = "USER GOALS (hard goals come before profit; within them, follow the obj
 
 OBJECTIVE_TEXT = {
     "max_profit": "maximise profit",
-    "self_consumption": (
-        "use own energy first: stay close to the matching fraction and avoid buying from "
-        "or selling to the grid"
-    ),
+    "self_consumption": "use own energy first (step 3: use the matching fraction)",
 }
 
 _INDENT = "         "
@@ -106,5 +103,5 @@ def _min_sell_price(g: Mapping[str, Any], features: Mapping[str, Any]) -> str:
     title = f"Never sell below EUR {eur(limit)}/MWh"
     if price < limit:
         return (f"{title} -> current price EUR {eur(price)}: BLOCKED.\n"
-                f"{_INDENT}Do not sell to the grid now; store the surplus, curtail what the battery cannot take.")
+                f"{_INDENT}Do not sell to the grid now: if surplus left after charge limit = YES, set curtail = true.")
     return f"{title} -> current price EUR {eur(price)}: allowed."

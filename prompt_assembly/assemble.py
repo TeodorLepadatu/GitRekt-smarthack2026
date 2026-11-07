@@ -12,17 +12,16 @@ from .sections import EXAMPLES_HEADER, RESPOND, RULES
 from .situation import render_situation
 from .user_goals import render_user_goals
 
-# The decision LLM runs with num_ctx 8192 and the plan budgets ~2.5k tokens for
-# the prompt; this leaves room for the answer.
-TOKEN_BUDGET = 4000
+# The decision LLM runs with num_ctx 8192. The prompt is about 3.7k tokens
+# (measured with qwen3:4b); keeping it under 6000 leaves room for the answer.
+TOKEN_BUDGET = 6000
 
 
 def render_examples() -> str:
     blocks = [EXAMPLES_HEADER]
     for i, ex in enumerate(SOLVED_EXAMPLES, start=1):
         parts = [render_situation(ex["features"], title=f"Example {i}: SITUATION")]
-        if ex.get("goal_config"):
-            parts.append(render_user_goals(ex["goal_config"], ex["features"]))
+        parts.append(render_user_goals(ex.get("goal_config"), ex["features"]))
         parts.append("Decision: " + render_decision(ex["decision"]))
         blocks.append("\n".join(parts))
     return "\n\n".join(blocks)
@@ -64,5 +63,6 @@ def render_prompt(features: Mapping[str, Any], goal_config: Any = None) -> str:
 
 
 def estimate_tokens(text: str) -> int:
-    """Rough token count (about 4 characters per token for English text and numbers)."""
-    return (len(text) + 3) // 4
+    """Rough token count, on the high side. This prompt is number-heavy, so it
+    averages about 3.4 characters per token with Qwen3 (12.3k chars = 3.67k tokens)."""
+    return int(len(text) / 3.3) + 1
