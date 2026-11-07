@@ -17,9 +17,11 @@ Physics (all from battery.BatteryConfig, the same formulas the guard uses):
 - The grid trade is automatic (plan section 2):
       grid = production - curtailed - demand - battery_setpoint
   positive = export (sold), negative = import (bought).
-- Curtailment only removes production, and only what would otherwise be
-  exported. If the actual surplus turns out smaller than forecast, less is
-  curtailed, so curtailing never causes an import or throws away battery energy.
+- Curtailment works as an export limiter (how real sites do it). The guard only
+  asks for it when exporting would be wrong (negative price, or a "never sell
+  below" goal), so when it does, all production that would otherwise be exported
+  is switched off, sized on the ACTUAL surplus rather than the forecast. It never
+  causes an import and never throws away battery energy.
 
 This is the only place that runs the physics. Settlement (settlement/) reads the
 StepResult and adds the money (prices, profit, wear) and the forecast errors.
@@ -136,9 +138,11 @@ class SiteSimulator:
             warnings.append(f"setpoint {requested:+.3f} MW clipped to {applied:+.3f} MW by the battery limits")
         after = min(b.e_max, max(min(b.e_min_mwh, before), b.energy_after(before, applied)))
 
-        # Curtail only production (never battery energy), and only what would otherwise be exported.
-        exportable = max(0.0, production - demand - applied)
-        curtailed = min(curtail_requested, exportable, production)
+        # Curtailment works as an export limiter: when the guard asks for it, every MW of
+        # production that would otherwise be exported is switched off, whatever the forecast
+        # said. Only production is curtailed, never battery energy.
+        exportable = min(production, max(0.0, production - demand - applied))
+        curtailed = exportable if curtail_requested > ROUNDING_TOLERANCE_MW else 0.0
         if curtail_requested - curtailed > ROUNDING_TOLERANCE_MW:
             warnings.append(f"curtailed {curtailed:.3f} MW instead of {curtail_requested:.3f} MW: "
                             "less surplus than forecast, or more than was produced")
