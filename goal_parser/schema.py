@@ -206,7 +206,7 @@ def build_goal(raw: dict[str, Any], goal_id: str, *, capacity_mwh: float | None 
 _BARE_HOUR_RE = re.compile(r"^\s*(\d{1,2})\s*$")
 
 
-def _ambiguous_hour(value: Any) -> int | None:
+def ambiguous_hour(value: Any) -> int | None:
     """``"6"`` could be 06:00 or 18:00; ``"18"``, ``"6 pm"`` and ``"06:00"`` are clear."""
     if isinstance(value, str) and (m := _BARE_HOUR_RE.match(value)):
         h = int(m.group(1))
@@ -243,7 +243,7 @@ def _build_reserve(raw: dict, goal_id: str, source: str, capacity_mwh: float | N
             )
         raise GoalValidationError(f"By what time should {_clean(mwh)} MWh be stored?")
     for t in (by_raw, until_raw):
-        if (h := _ambiguous_hour(t)) is not None:
+        if (h := ambiguous_hour(t)) is not None:
             other = "00:00 (midnight)" if h == 12 else f"{h + 12:02d}:00"
             raise GoalValidationError(f'In "{source}", do you mean {h:02d}:00 or {other}?')
     try:

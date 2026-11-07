@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .schema import OVERNIGHT_WINDOW, normalize_time
+from .schema import OVERNIGHT_WINDOW, ambiguous_hour, normalize_time
 
 _NUM = r"(-?\d+(?:[.,]\d+)?)"
 # A clock time. Not preceded or followed by more digits, and not followed by an
@@ -95,10 +95,13 @@ def split_clauses(text: str) -> list[str]:
 
 def times_in(text: str) -> set[str]:
     """Every clock time written in ``text``, as ``HH:MM`` (plus the overnight
-    window if the user said "overnight")."""
+    window if the user said "overnight"). A bare hour like "6" is left out:
+    it could be 06:00 or 18:00, so it does not confirm either."""
     low = normalize_text(text)
     found = set()
     for m in re.finditer(_TIME, low):
+        if ambiguous_hour(m.group(1)) is not None:
+            continue
         try:
             found.add(normalize_time(m.group(1)))
         except ValueError:

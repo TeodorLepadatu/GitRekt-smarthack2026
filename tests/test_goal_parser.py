@@ -205,6 +205,26 @@ class LLMPathTest(unittest.TestCase):
         self.assertEqual(r.source, "llm")
         self.assertTrue(r.needs_clarification)
 
+    def test_llm_picking_am_or_pm_for_a_bare_hour_is_rejected(self):
+        # Seen with qwen3:4b: "by 6" came back as "06:00".
+        for picked in ("06:00", "18:00"):
+            out = {"objective": None, "goals": [{"type": "reserve", "amount": 6, "unit": "MWh", "by": picked,
+                                                 "until": None, "source_text": "Store 6 MWh by 6"}],
+                   "clarifications": []}
+            with self.subTest(picked=picked):
+                r = parse_goals("Store 6 MWh by 6", llm=FakeLLM(out))
+                self.assertEqual(r.source, "rules")
+                self.assertEqual(r.config.goals, [])
+                self.assertIn("06:00 or 18:00", r.clarifications[0].question)
+
+    def test_llm_copying_a_bare_hour_asks_am_or_pm(self):
+        out = {"objective": None, "goals": [{"type": "reserve", "amount": 6, "unit": "MWh", "by": "6",
+                                             "until": None, "source_text": "Store 6 MWh by 6"}],
+               "clarifications": []}
+        r = parse_goals("Store 6 MWh by 6", llm=FakeLLM(out))
+        self.assertEqual(r.source, "llm")
+        self.assertIn("06:00 or 18:00", r.clarifications[0].question)
+
     def test_fallback_when_llm_fails_or_misbehaves(self):
         bad_outputs = {
             "exception": TimeoutError("timed out"),

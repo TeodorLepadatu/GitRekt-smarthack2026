@@ -22,6 +22,7 @@ from .schema import (
     GoalConfig,
     GoalValidationError,
     ParseResult,
+    ambiguous_hour,
     build_goal,
     normalize_time,
     parse_number,
@@ -202,8 +203,8 @@ def _check_llm_output(raw: Any, text: str) -> None:
             used.add(value)
         for field in ("by", "until"):
             t = g.get(field)
-            if not t:
-                continue
+            if not t or ambiguous_hour(t) is not None:
+                continue  # copied as written ("6"): build_goal asks am or pm
             try:
                 hhmm = normalize_time(t)
             except ValueError:
