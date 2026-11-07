@@ -1,0 +1,8 @@
+pandas>=2.0
+matplotlib>=3.7
+numpy>=1.26
+requests>=2.31
+holidays>=0.50
+lightgbm>=4.0
+fastapi>=0.110
+uvicorn>=0.29
