@@ -32,7 +32,7 @@ from common import finite_float, goal_config_dict
 from simulator import StepResult
 
 from .goals import GoalTracker
-from .settle import IntervalSettlement, forecast_errors, settle, settle_interval
+from .settle import ImbalancePrices, IntervalSettlement, forecast_errors, settle, settle_interval
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -68,9 +68,21 @@ class DayLedger:
         self.goals.set_goals(goal_config)
 
     # ------------------------------------------------------------------ record
-    def record(self, cycle: Any, features: Mapping[str, Any], actual: Optional[Mapping[str, Any]] = None) -> dict:
+    def record(
+        self,
+        cycle: Any,
+        features: Mapping[str, Any],
+        actual: Optional[Mapping[str, Any]] = None,
+        *,
+        imbalance: Optional[ImbalancePrices] = None,
+        scheduled_mwh: Optional[float] = None,
+    ) -> dict:
         """Settle one cycle (pipeline.CycleResult or its dict) with what actually happened:
-        the site simulator's StepResult, or measured values (see the module docstring)."""
+        the site simulator's StepResult, or measured values (see the module docstring).
+
+        ``imbalance`` and ``scheduled_mwh`` price the deviation from the promised
+        grid position; without them the deviation is not charged for, as before.
+        """
         decision = _get(cycle, "decision") or {}
         setpoint = _get(cycle, "setpoint") or {}
         warnings: list[str] = []
@@ -81,7 +93,10 @@ class DayLedger:
                 price = 0.0
                 warnings.append("price missing: settled at EUR 0")
             time = features.get("time") or actual.time or "??:??"
-            s = settle(actual, price, time=str(time), cfg=self.cfg)
+            s = settle(actual, price, time=str(time), cfg=self.cfg, imbalance=imbalance,
+                       scheduled_mwh=scheduled_mwh,
+                       forecast_demand_mw=finite_float(features.get("demand_mw")),
+                       forecast_production_mw=finite_float(features.get("production_mw")))
             return self._book(s, warnings, cycle, decision, setpoint, features)
 
         actual = actual or {}
@@ -226,11 +241,13 @@ class DayLedger:
             "profit_today_eur": self.profit_eur,
             "energy_cost_eur": total("energy_cost_eur", 2),
             "wear_eur": total("wear_eur", 2),
+            "imbalance_eur": total("imbalance_eur", 2),
             "no_battery_profit_eur": total("no_battery_profit_eur", 2),
             "value_added_eur": total("value_added_eur", 2),
             "energy_sold_mwh": total("grid_export_mwh"),
             "energy_bought_mwh": total("grid_import_mwh"),
             "curtailed_mwh": round(sum(r["curtail_mw"] for r in recs) * dt, 4),
+            "deviation_mwh": round(sum(abs(r.get("deviation_mwh", 0.0)) for r in recs), 4),
             "battery_throughput_mwh": round(sum(abs(r["battery_mw"]) for r in recs) * dt, 4),
             "soc_mwh": self.soc_mwh,
             "decisions_total": n,

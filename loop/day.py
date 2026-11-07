@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time as _time
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from battery import BatteryConfig
@@ -26,6 +27,7 @@ from feature_builder import PriceCurve, SiteForecast, build_features, hhmm
 from guard import guard
 from pipeline import CycleResult, run_cycle
 from settlement import DayLedger
+from settlement.settle import ImbalancePrices, scheduled_position_mwh
 from simulator import SiteSimulator
 from validator import fallback_decision
 from validator.schema import DEFAULT_TIMEOUT_S
@@ -47,12 +49,16 @@ class DayInput:
     (``SiteForecast`` or a dict with ``demand_mw``, ``production_mw``, ...).
     ``actuals``: what really happened, ``{"demand_mw": ..., "production_mw": ...}``
     per interval; ``None`` (or a missing entry) means "use the forecast".
+    ``imbalance``: the price of deviating from the plan, per interval. Given, the
+    battery also defends the promised grid position and the leftover deviation is
+    charged for; left out, the day runs and settles exactly as it did before.
     """
 
     prices: Sequence[float]
     forecasts: Sequence[SiteForecast | Mapping[str, Any]]
     actuals: Optional[Sequence[Optional[Mapping[str, Any]]]] = None
     date: str = ""
+    imbalance: Optional[Sequence[Optional[ImbalancePrices]]] = None
 
     def __post_init__(self) -> None:
         n = len(self.prices)
@@ -60,6 +66,8 @@ class DayInput:
             raise LoopError(f"{len(self.forecasts)} forecasts for {n} prices")
         if self.actuals is not None and len(self.actuals) != n:
             raise LoopError(f"{len(self.actuals)} actuals for {n} prices")
+        if self.imbalance is not None and len(self.imbalance) != n:
+            raise LoopError(f"{len(self.imbalance)} imbalance prices for {n} prices")
 
     @property
     def n(self) -> int:
@@ -134,8 +142,9 @@ class DayRunner:
 
         features, cycle = self._decide(t, forecast, warnings)
         demand, production = self._actual(i, forecast, warnings)
-        site = self.sim.step(cycle.setpoint, demand, production, time=t)
-        record = self.ledger.record(cycle, features, site)
+        imbalance, scheduled, setpoint = self._balance(i, cycle, forecast, demand, production, t, warnings)
+        site = self.sim.step(setpoint, demand, production, time=t)
+        record = self.ledger.record(cycle, features, site, imbalance=imbalance, scheduled_mwh=scheduled)
 
         record["features"] = dict(features)
         record["site"] = site.to_dict()
@@ -214,9 +223,12 @@ class DayRunner:
         """Features and the pipeline's decision. If the features cannot be built, the
         rule-based fallback decides and the guard still enforces the hard goals."""
         try:
+            prices = self.day.imbalance[self.index] if self.day.imbalance is not None else None
             features = self.feature_builder(
                 time=t, forecast=forecast, prices=self.curve, stored_mwh=self.sim.stored_mwh,
                 goal_config=self.goal_config, battery=self.cfg,
+                imbalance_short_eur_mwh=None if prices is None else prices.short_eur_mwh,
+                imbalance_long_eur_mwh=None if prices is None else prices.long_eur_mwh,
             )
         except Exception as exc:  # the cycle must go on
             warnings.append(f"features could not be built ({exc}); rule-based fallback")
@@ -225,6 +237,57 @@ class DayRunner:
             return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg))
         return features, run_cycle(features, self.goal_config, llm_call=self.llm_call,
                                    battery=self.cfg, timeout_s=self.timeout_s)
+
+    def _balance(
+        self, i: int, cycle: Any, forecast: Any, demand: float, production: float,
+        t: str, warnings: list[str],
+    ) -> tuple[Optional[ImbalancePrices], Optional[float], Any]:
+        """Hold the promised grid position, so far as the guard and the battery allow.
+
+        The setpoint was chosen on the forecast and the grid balances whatever
+        really happens, so once a deviation is charged for, the battery's job is
+        to absorb the forecast error. The adjusted setpoint goes back through the
+        guard: the hard goals and the battery limits still have the last word, and
+        whatever they refuse stays as a deviation and is paid for.
+
+        Returns the interval's imbalance prices, the promised position, and the
+        setpoint to run. Without imbalance prices nothing is adjusted.
+        """
+        prices = self.day.imbalance[i] if self.day.imbalance is not None else None
+        if prices is None:
+            return None, None, cycle.setpoint
+        f_demand, f_production = _forecast_values(forecast)
+        if f_demand is None or f_production is None:
+            warnings.append("no forecast for this interval; the promise could not be priced")
+            return None, None, cycle.setpoint
+
+        commanded = finite_float(getattr(cycle.setpoint, "battery_setpoint_mw", None)) or 0.0
+        curtail = finite_float(getattr(cycle.setpoint, "curtail_mw", None)) or 0.0
+        scheduled = scheduled_position_mwh(
+            forecast_demand_mw=f_demand, forecast_production_mw=f_production,
+            battery_mw=commanded, curtail_mw=curtail, cfg=self.cfg,
+        )
+        wanted = balancing_setpoint_mw(
+            scheduled_mwh=scheduled, demand_mw=demand, production_mw=production,
+            curtail_mw=curtail, cfg=self.cfg,
+        )
+        if abs(wanted - commanded) < 1e-9:
+            return prices, scheduled, cycle.setpoint
+
+        p_max = self.cfg.p_max_mw
+        fraction = max(-1.0, min(1.0, wanted / p_max)) if p_max > 0 else 0.0
+        state = {"time": t, "stored_mwh": self.sim.stored_mwh, "price_now": self.curve.prices[i],
+                 "demand_mw": demand, "production_mw": production, "net_mw": production - demand}
+        try:
+            checked = guard({"battery_fraction": fraction, "curtail": curtail > 0},
+                            state, self.goal_config, self.cfg)
+        except Exception as exc:  # the interval must go on with the original setpoint
+            warnings.append(f"balancing could not be checked ({exc}); kept the planned setpoint")
+            return prices, scheduled, cycle.setpoint
+        # The guard decides the battery; the curtailment was a deliberate choice, so it stands.
+        return prices, scheduled, SimpleNamespace(
+            battery_setpoint_mw=checked.battery_setpoint_mw, curtail_mw=curtail,
+        )
 
     def _minimal_features(self, t: str, forecast: Any) -> dict[str, Any]:
         """What is known without the feature builder: enough for the fallback and the guard."""
@@ -272,3 +335,23 @@ def _forecast_values(forecast: Any) -> tuple[Optional[float], Optional[float]]:
         if solar is not None or wind is not None:
             production = (solar or 0.0) + (wind or 0.0)
     return demand, production
+
+
+def balancing_setpoint_mw(
+    *,
+    scheduled_mwh: float,
+    demand_mw: float,
+    production_mw: float,
+    curtail_mw: float,
+    cfg: BatteryConfig,
+) -> float:
+    """The battery power that would hold the promised grid exchange exactly.
+
+    Rearranged from the site's energy balance
+    (``grid = production - curtailed - demand - battery``), on what really
+    happened rather than the forecast. Equivalent to the promised setpoint plus
+    the net forecast error, so defending the promise and absorbing the error are
+    the same action. The guard and the battery's own limits decide how much of
+    it actually happens.
+    """
+    return production_mw - curtail_mw - demand_mw - scheduled_mwh / cfg.interval_h

@@ -41,6 +41,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--date", help="run a real day (YYYY-MM-DD): ML forecasts + ENTSO-E day-ahead prices")
     ap.add_argument("--plan", action="store_true",
                     help="with --date: settle on the forecasts instead of the measured actuals")
+    ap.add_argument("--imbalance", action="store_true",
+                    help="with --date: charge for deviating from the promised grid position, and let "
+                         "the battery defend it (synthetic_out/prices.csv)")
     ap.add_argument("--out", help="write every interval record to this JSONL file")
     ap.add_argument("--quiet", action="store_true", help="print only the summary")
     args = ap.parse_args(argv)
@@ -63,7 +66,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.date:
         try:
-            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan)
+            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan,
+                           imbalance=args.imbalance)
         except RealDayError as exc:
             print(f"cannot build {args.date}: {exc}", file=sys.stderr)
             return 2
@@ -86,6 +90,9 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"battery added EUR {m['value_added_eur']:+.2f})")
     print(f"bought {m['energy_bought_mwh']:.2f} MWh, sold {m['energy_sold_mwh']:.2f} MWh, "
           f"curtailed {m['curtailed_mwh']:.2f} MWh, battery throughput {m['battery_throughput_mwh']:.2f} MWh")
+    if m["imbalance_eur"]:
+        print(f"imbalance: EUR {m['imbalance_eur']:+.2f} over {m['deviation_mwh']:.2f} MWh that the "
+              f"battery could not absorb")
     print(f"decisions: {m['decisions_llm']} LLM, {m['decisions_fallback']} fallback, {m['decisions_clipped']} clipped by the guard")
     if m["demand_mae_mw"] is not None:
         print(f"forecast error: demand {m['demand_mae_mw']:.3f} MW MAE, production {m['production_mae_mw']:.3f} MW MAE, "

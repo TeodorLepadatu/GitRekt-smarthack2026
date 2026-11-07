@@ -39,6 +39,13 @@ export interface Settlement {
   no_battery_profit_eur: number;
   /** profit_eur − no_battery_profit_eur: what the battery earned. */
   value_added_eur: number;
+
+  // Imbalance: the cost of not delivering what was promised. Present when the
+  // day has imbalance prices (settlement/settle.py).
+  /** Actual grid exchange − the exchange promised on the forecast. */
+  deviation_mwh?: number;
+  /** ≤ 0: what that deviation cost beyond the day-ahead price. */
+  imbalance_eur?: number;
 }
 
 /** One 15-minute interval. Also the payload of the SSE "cycle" event. */
@@ -153,6 +160,10 @@ export interface Metrics {
   // dashboard does not need them, but they come with the response.
   /** MWh charged + discharged. */
   battery_throughput_mwh?: number;
+  /** ≤ 0: the day's cost of not delivering what was promised. */
+  imbalance_eur?: number;
+  /** Total MWh the site drifted from its promises, summed without sign. */
+  deviation_mwh?: number;
   /** Stored energy after the latest interval. */
   soc_mwh?: number;
   /** decisions_fallback / decisions_total, and decisions_clipped / decisions_total. */

@@ -49,8 +49,14 @@ Step 1. Start value from the price zone:
   - BELOW: never discharge. SURPLUS: the matching fraction (store it). DEFICIT: 0.00 (keep energy).
 Step 2. If the objective is "use own energy first": the matching fraction.
 Step 3. If price cheap = YES and the zone is BELOW or NEAR: the charge limit (buy cheap energy).
-Step 4. If uncertainty is HIGH: cut the value to between -0.50 and 0.50 (-1.00 becomes -0.50,
-  1.00 becomes 0.50).
+Step 4. Leave room to correct a forecast error. The battery covers whatever the site
+  produces or uses beyond the forecast, but only while it has power and energy to spare;
+  at the full limit there is nothing left to correct with and the deviation is charged for
+  (section 8: "Deviating from the plan").
+  - If uncertainty is HIGH: cut the value to between -0.50 and 0.50 (-1.00 becomes -0.50,
+    1.00 becomes 0.50).
+  - If uncertainty is MEDIUM and the forecast band is worth EUR 5 or more: cut the value
+    to between -0.75 and 0.75.
 Step 5. Hard goals: if a goal says "battery_fraction >= X" and the value is below X: X.
   If a "never sell below" goal is BLOCKED: no discharging beyond the deficit.
 Step 6. If the value is past the charge or discharge limit: the limit."""

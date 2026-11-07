@@ -42,7 +42,8 @@ CONFIDENCES = ("low", "medium", "high")
 STATUSES = ("on_track", "behind", "met", "unreachable", "missed", "violated")
 
 SETTLEMENT_FIELDS = ("grid_import_mwh", "grid_export_mwh", "energy_cost_eur", "wear_eur",
-                     "profit_eur", "no_battery_profit_eur", "value_added_eur")
+                     "profit_eur", "no_battery_profit_eur", "value_added_eur",
+                     "deviation_mwh", "imbalance_eur")
 # Goal fields that come from the goal definition, not from its running state.
 GOAL_DEF_FIELDS = ("mwh", "by", "until", "eur_per_mwh")
 

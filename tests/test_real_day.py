@@ -28,6 +28,12 @@ from loop.real_day import (
 pd = pytest.importorskip("pandas")
 
 
+def no_llm(prompt: str) -> str:
+    """``run_cycle`` defaults ``llm_call`` to a real ``DecisionAgent``; these tests
+    check the day's data, so they take the rule-based path and call no model."""
+    raise RuntimeError("no LLM in these tests")
+
+
 # --------------------------------------------------------------------------- #
 # stubs
 
@@ -253,7 +259,7 @@ def test_real_day_builds_a_runnable_day():
     assert day.date == date and day.n == N
     assert day.prices == [90.0] * N
     assert len(day.forecasts) == N and len(day.actuals) == N
-    DayRunner(day, None, start_soc_mwh=4.0).run()
+    DayRunner(day, None, start_soc_mwh=4.0, llm_call=no_llm).run()
 
 
 def test_real_day_defaults_to_the_gate_closure():
@@ -279,7 +285,7 @@ def test_a_real_day_settles_on_the_actuals_not_the_forecast():
     assert on_actual.actuals[0]["production_mw"] > on_forecast.actuals[0]["production_mw"]
 
     def profit(day):
-        r = DayRunner(day, None, start_soc_mwh=4.0)
+        r = DayRunner(day, None, start_soc_mwh=4.0, llm_call=no_llm)
         r.run()
         return r.summary()["metrics"]["profit_today_eur"]
 
@@ -340,7 +346,7 @@ def test_the_forecast_is_close_to_what_happened(real):
 def test_a_real_day_runs_through_the_whole_cycle(real):
     goals = pytest.importorskip("goal_parser").parse_goals(
         "Store 6 MWh by 18:00", battery_capacity_mwh=10).config
-    runner = DayRunner(real, goals, start_soc_mwh=4.0)
+    runner = DayRunner(real, goals, start_soc_mwh=4.0, llm_call=no_llm)
     runner.run()
     s = runner.summary()
     assert s["intervals_run"] == N

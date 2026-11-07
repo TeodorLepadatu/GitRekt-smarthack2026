@@ -71,7 +71,8 @@ def test_interval_shape_matches_the_contract(setup):
                                    "explanation_for_operator", "fallback_reason"}
     assert set(iv["guard"]) == {"battery_setpoint_mw", "curtail_mw", "clipped", "applied_rules"}
     assert set(iv["settlement"]) == {"grid_import_mwh", "grid_export_mwh", "energy_cost_eur", "wear_eur",
-                                     "profit_eur", "no_battery_profit_eur", "value_added_eur"}
+                                     "profit_eur", "no_battery_profit_eur", "value_added_eur",
+                                     "deviation_mwh", "imbalance_eur"}
     assert iv["decision"]["source"] == "fallback" and iv["decision"]["fallback_reason"]
 
 

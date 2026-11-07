@@ -40,6 +40,7 @@ from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from feature_builder import SiteForecast
+from settlement import ImbalancePrices
 
 from .day import DayInput, LoopError
 
@@ -49,6 +50,9 @@ N = 96
 
 PRICES_CSV = Path("data/energy_price.csv")
 PRICE_COLUMN = "Day-ahead Price (EUR/MWh)"
+
+# synth_market.py's imbalance prices: what deviating from the plan costs.
+IMBALANCE_CSV = Path("synthetic_out/prices.csv")
 
 # 99th percentile of each national series over the four years in predictions/dataset.csv.
 # The p99 rather than the max: one freak hour must not shrink every other day.
@@ -144,6 +148,36 @@ def load_prices(path: Path | str = PRICES_CSV) -> dict[int, float]:
         for k in (1, 2, 3):
             out.setdefault(t + k * STEP_S, v)
     return out
+
+
+def load_imbalance_prices(path: Path | str = IMBALANCE_CSV) -> dict[int, ImbalancePrices]:
+    """``synthetic_out/prices.csv`` -> {unix seconds: ImbalancePrices}.
+
+    Built by ``synth_market.py`` from the real load and generation mix, so the
+    penalties are synthetic even on a real day; the day-ahead price keeps coming
+    from the real ENTSO-E file. :meth:`ImbalancePrices.penalty_for` clamps the
+    pair to the day-ahead price, so the two sources crossing cannot turn a
+    penalty into a bonus.
+    """
+    import pandas as pd
+
+    p = Path(path)
+    if not p.exists():
+        raise RealDayError(
+            f"{p} not found - run `python synth_market.py predictions/dataset.csv synthetic_out` "
+            "to generate the market prices")
+    df = pd.read_csv(p)
+    missing = {"time", "imb_short_price", "imb_long_price"} - set(df.columns)
+    if missing:
+        raise RealDayError(f"{p} has no {sorted(missing)} column(s) (columns: {list(df.columns)})")
+    # Subtracting the epoch and dividing by 1 s keeps this right whatever
+    # resolution pandas picked for the column (s, ms or ns).
+    seconds = (pd.to_datetime(df["time"], utc=True) - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1s")
+    ts = (seconds // STEP_S) * STEP_S
+    short = pd.to_numeric(df["imb_short_price"], errors="coerce")
+    long = pd.to_numeric(df["imb_long_price"], errors="coerce")
+    return {int(t): ImbalancePrices(short_eur_mwh=float(a), long_eur_mwh=float(b))
+            for t, a, b in zip(ts, short, long) if a == a and b == b}
 
 
 # --------------------------------------------------------------------------- #
@@ -282,6 +316,8 @@ def real_day(
     models: Optional[Mapping[str, Any]] = None,
     data: Any = None,
     with_actuals: bool = True,
+    imbalance: bool = False,
+    imbalance_path: Path | str = IMBALANCE_CSV,
     allow_fetch: bool = True,
 ) -> DayInput:
     """One real day at the site, ready for :class:`~loop.day.DayRunner`.
@@ -292,6 +328,9 @@ def real_day(
     ``prices``: 96 values or {timestamp: price}; by default read from
     ``prices_path``. ``with_actuals=False`` leaves the day unsettled against
     measurements, so the forecasts are used instead (a plan, not a backtest).
+    ``imbalance=True`` charges for deviating from the promised grid position and
+    lets the battery defend it (see :class:`~loop.day.DayInput`); it needs the
+    actuals, since without a measurement there is no deviation.
     """
     stamps = day_timestamps(date)
     curve = _prices_for(stamps, prices, prices_path, date)
@@ -304,7 +343,18 @@ def real_day(
         scale=scale, models=models, data=data, allow_fetch=allow_fetch,
     )
     actuals = site_actuals(stamps, scale=scale, data=data) if with_actuals else None
-    return DayInput(prices=curve, forecasts=forecasts, actuals=actuals, date=date)
+    imb = None
+    if imbalance:
+        if not with_actuals:
+            raise RealDayError("imbalance needs the actuals: a forecast cannot deviate from itself")
+        table = load_imbalance_prices(imbalance_path)
+        imb = [table.get(t) for t in stamps]
+        if not any(x is not None for x in imb):
+            raise RealDayError(
+                f"no imbalance price for any interval of {date}; {Path(imbalance_path)} covers "
+                f"{_iso(min(table))} .. {_iso(max(table))}" if table else
+                f"{Path(imbalance_path)} holds no usable imbalance prices")
+    return DayInput(prices=curve, forecasts=forecasts, actuals=actuals, date=date, imbalance=imb)
 
 
 def _prices_for(
