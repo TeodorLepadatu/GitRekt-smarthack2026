@@ -291,3 +291,26 @@ def _eur(x: float) -> str:
     """Whole euros unless there is a real fractional part, as prompt_assembly prints them."""
     x = round(x, 1)
     return f"{x:.0f}" if abs(x - round(x)) < 1e-9 else f"{x:.1f}"
+
+
+def break_even_at(
+    curve: PriceCurve | Any,
+    index: int,
+    stored_mwh: float,
+    *,
+    battery: Optional[BatteryConfig] = None,
+    wear_eur_per_mwh: Optional[float] = None,
+) -> float:
+    """What a stored MWh is worth if it is kept for later, in EUR/MWh.
+
+    The same number ``build_features`` puts in ``features["break_even"]``, for
+    callers that have a price curve and a state of charge but no full feature
+    set (the dashboard's not-yet-decided intervals). See :func:`_break_even`.
+    """
+    cfg = battery or BatteryConfig()
+    wear = cfg.wear_eur_per_mwh if wear_eur_per_mwh is None else wear_eur_per_mwh
+    c = curve if isinstance(curve, PriceCurve) else PriceCurve(curve)
+    stored = finite_float(stored_mwh)
+    if stored is None:
+        raise FeatureBuilderError(f"stored_mwh must be a number, got {stored_mwh!r}")
+    return _break_even(c, index, stored, cfg, wear)["break_even"]
