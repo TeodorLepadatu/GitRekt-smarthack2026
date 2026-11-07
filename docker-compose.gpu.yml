@@ -1,0 +1,20 @@
+# Give the Ollama container an NVIDIA GPU (Linux, or Windows with WSL 2).
+#
+# Ollama in Docker runs on the CPU by default, where each AI decision is slow and
+# often hits the 60 s timeout. With an NVIDIA card and the NVIDIA Container Toolkit
+# installed (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/),
+# decisions take seconds:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Check the toolkit first:  docker run --rm --gpus all ubuntu nvidia-smi
+# Not for macOS: Docker there cannot use the Apple GPU (use docker-compose.host-ollama.yml).
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

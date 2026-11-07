@@ -60,6 +60,76 @@ Open `http://localhost:5173`. Stop it with `Ctrl+C`, or run:
 docker compose down
 ```
 
+### macOS and Linux
+
+Without Docker, from the repository root (uses `.venv/bin/python` if it exists, otherwise
+`python3`; install the packages once with `python3 -m pip install -r requirements.txt`):
+
+```bash
+./run_app.sh                          # rule-based decisions, no Ollama needed
+./run_app.sh --llm --model qwen3:4b   # decisions by the LLM (Ollama running on the machine)
+./run_app.sh --date 2026-06-15        # a real day
+```
+
+It starts the backend and the dashboard in one terminal (`http://localhost:5173`); `Ctrl+C` stops
+both. Without Node.js installed, the dashboard dev server runs in Docker instead.
+
+With Docker, the same commands as above work on macOS and Linux; set the model in the shell:
+
+```bash
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b docker compose up --build
+```
+
+On a Mac, Ollama inside Docker runs on the CPU only (no Apple GPU), so decisions are slow and
+often fall back to the rules after the 60 s timeout. To use the Ollama installed on the Mac
+instead (GPU, and the models you already pulled), add `docker-compose.host-ollama.yml`:
+
+```bash
+ollama pull qwen3:4b    # once; Ollama must be running on the Mac
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
+  docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
+```
+
+Stop it with `Ctrl+C`, or `docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml down`.
+
+### Linux
+
+Needs Docker Engine with the Compose plugin, version 2.24 or newer (`docker compose version`;
+the old `docker-compose` v1 does not read these files). Run Docker without `sudo` by adding
+yourself to the `docker` group once, then log out and back in:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Then, from the repository root, the full app with Ollama in Docker:
+
+```bash
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b docker compose up --build
+```
+
+On Linux Ollama in Docker can use an **NVIDIA GPU** (install the NVIDIA Container Toolkit first;
+`docker run --rm --gpus all ubuntu nvidia-smi` checks it). Without a GPU, decisions run on the CPU
+and are slow:
+
+```bash
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
+  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+To use an Ollama already installed on the machine instead, `docker-compose.host-ollama.yml` works on
+Linux too, but Ollama must listen on all interfaces, not only on 127.0.0.1:
+
+```bash
+sudo systemctl edit ollama.service   # add: [Service] / Environment="OLLAMA_HOST=0.0.0.0:11434"
+sudo systemctl restart ollama
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
+  docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
+```
+
+Without Docker, `./run_app.sh` works on Linux as on macOS (it needs Python 3 and, for the
+dashboard, Node.js or Docker). Open `http://localhost:5173` in every case.
+
 `--date` replays a real day end to end. The forecasts are issued at the day-ahead gate
 (12:00 local the day before), so the models only see what was known then, and the books
 are settled against what was actually measured — the printed forecast error is honest.

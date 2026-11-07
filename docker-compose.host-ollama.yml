@@ -1,0 +1,33 @@
+# Use the Ollama already running on your computer instead of the one in Docker.
+#
+# On a Mac, Ollama inside Docker runs on the CPU only (no Apple GPU), so each AI
+# decision is slow and often hits the 60 s timeout. Ollama installed on the Mac
+# itself uses the GPU and answers in seconds, and reuses the models you already
+# pulled (no multi-GB download).
+#
+#   ollama serve                                    # if Ollama isn't running already
+#   ollama pull qwen3:4b                            # once
+#   ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
+#     docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
+#
+# Works on Windows too (Docker Desktop provides host.docker.internal); on Linux the
+# extra_hosts line below maps it. On Linux, Ollama listens on 127.0.0.1 only by
+# default, which containers cannot reach; make it listen on all interfaces once:
+#
+#   sudo systemctl edit ollama.service      # add these two lines, then save:
+#     [Service]
+#     Environment="OLLAMA_HOST=0.0.0.0:11434"
+#   sudo systemctl restart ollama
+#
+# (Port 11434 is then reachable from your network too; block it in a firewall if needed.)
+services:
+  ollama:
+    profiles: ["docker-ollama"]        # not started unless that profile is asked for
+  ollama-model:
+    profiles: ["docker-ollama"]
+  api:
+    environment:
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: !reset {}
