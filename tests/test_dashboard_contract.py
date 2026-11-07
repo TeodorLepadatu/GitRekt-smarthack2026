@@ -116,12 +116,19 @@ def _check_interface(payload: dict, name: str, contract: dict, where: str = "") 
 # a day to build payloads from
 
 
+def _no_llm(prompt: str) -> str:
+    """``run_cycle`` defaults ``llm_call`` to a real ``DecisionAgent``; these tests
+    check shapes, so they take the rule-based path and make no Ollama calls."""
+    raise RuntimeError("no LLM in these tests")
+
+
 @pytest.fixture(scope="module")
 def runner() -> DayRunner:
     """Half a demo day, with both a reserve and a min-sell goal, so goals are live."""
     goals = parse_goals("Store 6 MWh by 18:00. Never sell below 50 EUR/MWh",
                         battery_capacity_mwh=10).config
-    r = DayRunner(demo_day(seed=7), goals, start_soc_mwh=4.0, battery=BatteryConfig())
+    r = DayRunner(demo_day(seed=7), goals, start_soc_mwh=4.0, battery=BatteryConfig(),
+                  llm_call=_no_llm)
     r.run(until="13:00")
     return r
 
@@ -163,7 +170,8 @@ def test_settlement_is_nested_and_complete(runner, contract):
         # the same numbers the ledger keeps flat
         for field in declared:
             assert s[field] == pytest.approx(record[field], abs=1e-9)
-        assert s["profit_eur"] == pytest.approx(s["energy_cost_eur"] + s["wear_eur"], abs=0.02)
+        assert s["profit_eur"] == pytest.approx(
+            s["energy_cost_eur"] + s["wear_eur"] + s.get("imbalance_eur", 0.0), abs=0.02)
 
 
 def test_day_payload_matches_contract(runner, contract):
@@ -247,7 +255,7 @@ def test_interval_payload_survives_broken_records(record, contract):
 
 
 def test_payloads_survive_an_empty_runner(contract):
-    empty = DayRunner(demo_day(seed=3), None)
+    empty = DayRunner(demo_day(seed=3), None, llm_call=_no_llm)
     _check_interface(state_payload(empty), "StateSnapshot", contract)
     assert state_payload(empty)["current"] is None
     day = day_payload(empty)

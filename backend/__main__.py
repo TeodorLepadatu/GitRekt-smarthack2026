@@ -45,6 +45,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--log", help="write every interval record to this JSONL file")
     ap.add_argument("--date", help="run a real day (YYYY-MM-DD) instead of the demo day")
     ap.add_argument("--plan", action="store_true", help="with --date: settle on the forecasts, not the actuals")
+    ap.add_argument("--imbalance", action="store_true",
+                    help="with --date: charge for deviating from the promised grid position")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -63,7 +65,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.date:
         try:  # built once: a reset replays the same day
-            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan)
+            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan,
+                           imbalance=args.imbalance)
         except RealDayError as exc:
             sys.exit(f"cannot build {args.date}: {exc}")
         day_factory = lambda: day  # noqa: E731

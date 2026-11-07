@@ -96,8 +96,16 @@ def build_features(
     goal_config: Any = None,
     battery: Optional[BatteryConfig] = None,
     wear_eur_per_mwh: Optional[float] = None,
+    imbalance_short_eur_mwh: Optional[float] = None,
+    imbalance_long_eur_mwh: Optional[float] = None,
 ) -> dict[str, Any]:
-    """Build prompt section 8 and the goal progress for one 15-minute interval."""
+    """Build prompt section 8 and the goal progress for one 15-minute interval.
+
+    The two ``imbalance_*`` prices are what a deviation from the plan settles at
+    (``settlement.ImbalancePrices``). Given, they add what being wrong costs and
+    what the production band puts at risk, so the uncertainty can be weighed in
+    money rather than only labelled.
+    """
     cfg = battery or BatteryConfig()
     if wear_eur_per_mwh is None:
         wear_eur_per_mwh = cfg.wear_eur_per_mwh
@@ -119,6 +127,7 @@ def build_features(
     out.update(_prices(curve, index, stored, cfg, wear_eur_per_mwh))
     out.update(_battery(stored, cfg))
     out["goals"] = goals_progress(goal_config, now_min=now_min, stored_mwh=stored, battery=cfg)
+    out.update(_imbalance(out, cfg, imbalance_short_eur_mwh, imbalance_long_eur_mwh))
     out.update(_labels(out))
     # Settlement and the dashboard need these; the prompt ignores keys it does not know.
     out["interval_h"] = cfg.interval_h
@@ -188,6 +197,36 @@ def _battery(stored: float, cfg: BatteryConfig) -> dict[str, Any]:
         "max_charge_fraction": round(max_c / cfg.p_max_mw, 2),
         "max_discharge_fraction": round(max_d / cfg.p_max_mw, 2),
     }
+
+
+def _imbalance(
+    f: Mapping[str, Any],
+    cfg: BatteryConfig,
+    short: Optional[float],
+    long: Optional[float],
+) -> dict[str, Any]:
+    """What deviating from the plan costs, and what the production band risks.
+
+    ``imbalance_risk_eur`` prices half the 10-90 % band at the worse of the two
+    penalties: roughly what this interval's uncertainty costs if nothing absorbs
+    it. Compare it with ``max_charge_mw``/``max_discharge_mw`` to see whether
+    there is room to absorb it.
+    """
+    price = finite_float(f.get("price_now"))
+    short, long = finite_float(short), finite_float(long)
+    if price is None or short is None or long is None:
+        return {}
+    premium = max(0.0, short - price)     # short: the shortfall is bought back dearer
+    discount = max(0.0, price - long)     # long: the surplus is sold cheaper
+    out = {
+        "imbalance_short_premium": round(premium, 1),
+        "imbalance_long_discount": round(discount, 1),
+    }
+    low, high = finite_float(f.get("prod_low_mw")), finite_float(f.get("prod_high_mw"))
+    if low is not None and high is not None:
+        half_band_mwh = max(0.0, high - low) / 2 * cfg.interval_h
+        out["imbalance_risk_eur"] = round(half_band_mwh * max(premium, discount), 1)
+    return out
 
 
 def _prices(curve: PriceCurve, index: int, stored: float, cfg: BatteryConfig,

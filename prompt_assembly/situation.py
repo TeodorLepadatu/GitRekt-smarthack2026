@@ -35,6 +35,9 @@ OPTIONAL_FIELDS = (
     "prod_low_mw",             # ML 2 forecast range
     "prod_high_mw",
     "uncertainty",             # "LOW" | "MEDIUM" | "HIGH"
+    "imbalance_risk_eur",      # what this interval's forecast band costs if nothing absorbs it
+    "imbalance_short_premium",  # EUR/MWh paid above the price for energy promised and not delivered
+    "imbalance_long_discount",  # EUR/MWh lost on energy delivered beyond the plan
     "price_rank",              # 0 = cheapest interval today, 100 = most expensive
     "price_avg",
     "future_max_price",
@@ -179,7 +182,15 @@ def render_situation(
         net += f" ({label})"
     lines.append(f"- Site: demand {mw(f['demand_mw'])} MW, {prod} -> {net}")
     if (unc := r.choice("uncertainty", UNCERTAINTY_LEVELS)):
-        lines.append(f"- Forecast uncertainty: {unc}")
+        line = f"- Forecast uncertainty: {unc}"
+        risk = r.number("imbalance_risk_eur")
+        if risk is not None:
+            line += f", worth EUR {eur(risk)} if nothing absorbs it"
+        lines.append(line)
+    short, long = r.number("imbalance_short_premium"), r.number("imbalance_long_discount")
+    if short is not None and long is not None:
+        lines.append(f"- Deviating from the plan: EUR {eur(short)}/MWh extra when short, "
+                     f"EUR {eur(long)}/MWh lost when long")
 
     # Prices
     price = f"- Price now: EUR {eur(f['price_now'])}/MWh"

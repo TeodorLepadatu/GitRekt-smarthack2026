@@ -30,6 +30,33 @@ python -m loop --date 2026-06-15 --llm --model qwen3.5:latest --goals "Store 6 M
 are settled against what was actually measured — the printed forecast error is honest.
 `--plan` settles on the forecasts instead, for a day that has not happened yet.
 
+## Imbalance: paying for being wrong
+
+A setpoint is chosen on the forecast and the grid balances whatever really happens, so a
+forecast error leaves the site short or long of what it promised. `--imbalance` prices
+that gap the way a market does — energy promised and not delivered is bought back above
+the day-ahead price, energy delivered unasked is sold below it — and lets the battery
+defend the promise, within whatever the guard and its own limits allow:
+
+```powershell
+python -m loop --date 2026-06-15 --imbalance
+```
+
+Without it the uncertainty the models work out is only a label: being wrong costs the
+same as being right, so there is nothing to hedge. With it the 10–90 % band has a price,
+and what the battery is really for becomes visible. The same hour of 2026-06-15, with the
+battery starting empty:
+
+| | profit | without a battery | the battery added |
+|---|---|---|---|
+| deviation not priced | −9.84 | +19.72 | **−29.55** |
+| deviation priced | −3.20 | −90.31 | **+87.11** |
+
+The battery's measured value changes sign: without one, nothing absorbs the error and the
+penalty lands in full. Prices come from `synthetic_out/prices.csv` (`synth_market.py`), so
+they are synthetic even on a real day; the day-ahead price stays the real ENTSO-E one and
+the pair is clamped so deviating can never pay better than delivering the plan.
+
 | Module | Role |
 |---|---|
 | `predictions/` | ML 1 + ML 2: demand and production forecasts (solar, wind, total) with 10–90 % ranges for any 15-min timestamp up to 7 days ahead; `DemandForecaster`, `ProductionForecaster` and an HTTP API (see `predictions/README.md`) |

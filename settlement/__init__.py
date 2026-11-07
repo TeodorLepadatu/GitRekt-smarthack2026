@@ -9,14 +9,25 @@
 
 from .goals import GoalState, GoalTracker
 from .ledger import DayLedger, goal_costs
-from .settle import IntervalSettlement, forecast_errors, settle, settle_interval
+from .settle import (
+    ImbalancePrices,
+    IntervalSettlement,
+    forecast_errors,
+    imbalance_cost,
+    scheduled_position_mwh,
+    settle,
+    settle_interval,
+)
 
 __all__ = [
     "DayLedger",
     "GoalState",
     "GoalTracker",
+    "ImbalancePrices",
     "IntervalSettlement",
     "forecast_errors",
+    "imbalance_cost",
+    "scheduled_position_mwh",
     "goal_costs",
     "settle",
     "settle_interval",
