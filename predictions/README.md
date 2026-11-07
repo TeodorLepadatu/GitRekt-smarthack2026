@@ -165,7 +165,20 @@ Metrics:
 
 ## Results (2026 backtest)
 
-Full tables: `reports/eval_2026.csv`. Plots: `reports/mae_by_lead.png`, `reports/week_*.png`.
+Full tables: `reports/eval_2026.csv`. Each plot is explained under it in section 3b of the
+notebook:
+
+| Plot | What it answers |
+|---|---|
+| `reports/skill_heatmap.png` | How much better than the simple rules, per series and lead time? |
+| `reports/error_pct_by_lead.png` | How big is the error, as % of the typical value? |
+| `reports/range_coverage.png` | Can the 10–90 % ranges be trusted (target 80 %)? |
+| `reports/error_by_hour.png` | When in the day is the day-ahead forecast wrong? |
+| `reports/error_by_month.png` | Which months are hard? |
+| `reports/forecast_vs_actual.png` | Over- or under-forecasting? (day-ahead, every 2026 interval) |
+| `reports/forecast_sharpening.png` | How does one day's forecast improve as the day approaches? |
+| `reports/mae_by_lead.png` | Error in MW vs both simple rules, by lead time |
+| `reports/week_*.png` | Full 7-day forecasts vs actuals (one winter, one summer week) |
 
 **Error, MAE in MW (nMAE in brackets):**
 
