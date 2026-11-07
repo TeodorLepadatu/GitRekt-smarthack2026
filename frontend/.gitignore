@@ -4,3 +4,4 @@ dist/
 # the repo-root .gitignore ignores lib/ (Python packaging); keep our source folder
 !/src/lib/
 *.tsbuildinfo
+.vite/
