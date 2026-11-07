@@ -7,7 +7,9 @@ after every interval (so the dashboard stays responsive while the LLM thinks)
 and queue commands (new goals, speed, reset) that the worker applies between
 intervals, never in the middle of one.
 
-Shapes follow frontend/src/api/types.ts.
+The shapes come from dashboard/contract.py, the one place the loop's objects
+are translated into frontend/src/api/types.ts; this module only adds the
+objective entry and the goal commands the frontend's goal list needs.
 """
 from __future__ import annotations
 
@@ -16,15 +18,15 @@ import queue
 import threading
 import time as _time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Optional
 
 from battery import BatteryConfig
-from feature_builder import build_features
+from dashboard import day_payload, goals_payload, interval_payload, metrics_payload, state_payload
 from goal_parser import GoalStore
 from goal_parser.rules import parse_raw
 from loop import DayInput, DayRunner, demo_day
 
-INTERVALS = 96
 OBJECTIVE_ID = "objective"
 OBJECTIVE_TEXT = {"max_profit": "Maximise profit", "self_consumption": "Use my own energy first"}
 
@@ -36,9 +38,11 @@ class GoalNotFound(KeyError):
 @dataclass
 class _Snapshot:
     """Everything the read routes need, replaced as a whole after every interval."""
-    intervals: list[dict] = field(default_factory=list)      # decided intervals, API shape
-    metrics: dict = field(default_factory=dict)
-    goal_states: dict = field(default_factory=dict)          # id -> settlement GoalState dict
+    day: Any
+    curve: Any
+    records: list[dict] = field(default_factory=list)       # the loop's records, decided so far
+    metrics: dict = field(default_factory=dict)             # ledger.metrics()
+    goal_summary: list[dict] = field(default_factory=list)  # ledger.goal_summary()
     stored_mwh: float = 0.0
     day_over: bool = False
 
@@ -78,58 +82,40 @@ class Backend:
     # ------------------------------------------------------------------ reads
 
     def state(self) -> dict:
-        snap = self._snap
-        return {
-            "capacity_mwh": self.cfg.capacity_mwh,
-            "max_power_mw": self.cfg.p_max_mw,
-            "profit_today_eur": snap.metrics.get("profit_today_eur", 0.0),
-            "current": snap.intervals[-1] if snap.intervals else None,
-            "sim": self.sim_status(),
-        }
+        status = self.sim_status()
+        return state_payload(self._view(), running=status["running"], speed=status["speed"])
 
     def day(self) -> dict:
-        snap = self._snap
-        decided = snap.intervals
-        future = [self._forecast_slot(i, snap.stored_mwh) for i in range(len(decided), INTERVALS)]
-        return {
-            "date": self.date,
-            "now": decided[-1]["time"] if decided else None,
-            "intervals": decided + future,
-        }
+        out = day_payload(self._view())
+        out["date"] = self.date
+        return out
 
     def metrics(self) -> dict:
-        m = self._snap.metrics
-        keys = ("profit_today_eur", "energy_cost_eur", "wear_eur", "no_battery_profit_eur", "value_added_eur",
-                "energy_sold_mwh", "energy_bought_mwh", "curtailed_mwh", "decisions_total", "decisions_llm",
-                "decisions_fallback", "decisions_clipped", "goals_met", "goals_total")
-        return {k: m.get(k, 0) for k in keys}
+        return metrics_payload(self._view())
 
     def goal_list(self) -> list[dict]:
-        """The active goals with their status: the objective first, then the hard goals."""
-        snap = self._snap
+        """The active goals with their status: the objective (if the user set one), then the goals."""
         cfg = self.goals.config.to_dict()
         out = []
-        if self._objective_sentences() or cfg["objective"] != "max_profit":   # only an objective the user set
+        if self._objective_sentences() or cfg["objective"] != "max_profit":
             out.append({"id": OBJECTIVE_ID, "type": "max_profit", "hard": False, "status": "on_track",
-                        "source_text": OBJECTIVE_TEXT.get(cfg["objective"], cfg["objective"])})
-        for g in cfg["goals"]:
-            st = snap.goal_states.get(g["id"], {})
-            item = {"id": g["id"], "type": g["type"], "hard": g.get("hard", True),
-                    "source_text": g.get("source_text", ""), "status": st.get("status", "on_track")}
-            if g["type"] == "reserve":
-                item.update(mwh=g["mwh"], by=g["by"], until=g["until"], stored_mwh=round(snap.stored_mwh, 2),
-                            need_mwh=st.get("need_mwh"), hours_left=st.get("hours_left"),
-                            reached_at=st.get("reached_at"), violated_at=st.get("violated_at"),
-                            message=st.get("message"))
-            else:
-                item.update(eur_per_mwh=g["eur_per_mwh"], violated_at=st.get("violated_at"),
-                            message=st.get("message"))
-            out.append(item)
-        return out
+                        "source_text": OBJECTIVE_TEXT.get(cfg["objective"], cfg["objective"]), "message": ""})
+        return out + goals_payload(self._view())
 
     def sim_status(self) -> dict:
         with self._cond:
             return {"running": self._speed > 0 and not self._snap.day_over, "speed": self._speed}
+
+    def _view(self) -> SimpleNamespace:
+        """The latest snapshot dressed as a runner, for dashboard/contract.py."""
+        snap = self._snap
+        return SimpleNamespace(
+            cfg=self.cfg, day=snap.day, curve=snap.curve, records=snap.records,
+            sim=SimpleNamespace(stored_mwh=snap.stored_mwh),
+            ledger=SimpleNamespace(metrics=lambda: snap.metrics, goal_summary=lambda: snap.goal_summary,
+                                   profit_eur=snap.metrics.get("profit_today_eur", 0.0)),
+            goal_config=self.goals.config,   # the active goals, including ones the worker applies next
+        )
 
     # ---------------------------------------------------------------- commands
 
@@ -271,7 +257,7 @@ class Backend:
         if self._pending_goals:
             self._runner.set_goals(self.goals.config)
             self._pending_goals = False
-            self._publish_goals()
+            self._publish()
         self._cond.notify_all()
 
     def _step_once(self) -> Optional[dict]:
@@ -281,22 +267,14 @@ class Backend:
             if runner.done:
                 return None
         record = runner.step()                      # outside the lock: the LLM may take seconds
-        interval = to_interval(record)
+        interval = interval_payload(record)
         with self._cond:
             if runner is not self._runner:          # reset while this interval ran: drop it
                 return None
-            snap = self._snap
-            self._snap = _Snapshot(
-                intervals=[*snap.intervals, interval],
-                metrics=runner.ledger.metrics(),
-                goal_states=_goal_states(runner),
-                stored_mwh=runner.sim.stored_mwh,
-                day_over=runner.done,
-            )
             if runner.done:
                 runner.ledger.finalize()
-                self._snap.goal_states = _goal_states(runner)
                 self._speed = 0.0
+            self._publish()
             listeners = list(self._listeners)
             self._cond.notify_all()
         for fn in listeners:
@@ -310,27 +288,15 @@ class Backend:
         self._day = self.day_factory()
         self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self.start_soc_mwh,
                                  battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path)
-        self._snap = _Snapshot(metrics=self._runner.ledger.metrics(), stored_mwh=self.start_soc_mwh)
+        self._publish()
         self._deadline = None
 
-    def _publish_goals(self) -> None:
-        self._snap = _Snapshot(intervals=self._snap.intervals, metrics=self._runner.ledger.metrics(),
-                               goal_states=_goal_states(self._runner), stored_mwh=self._snap.stored_mwh,
-                               day_over=self._snap.day_over)
-
-    def _forecast_slot(self, i: int, stored_mwh: float) -> dict:
-        f = self._day.forecasts[i]
-        get = (lambda k: f.get(k)) if isinstance(f, dict) else (lambda k: getattr(f, k, None))
-        time = self._runner.curve.time_at(i)
-        try:
-            features = build_features(time=time, forecast=f, prices=self._runner.curve,
-                                      stored_mwh=stored_mwh, battery=self.cfg)
-            break_even = features["break_even"]
-        except Exception:
-            break_even = None
-        return {"time": time, "price_eur_mwh": self._day.prices[i], "break_even": break_even,
-                "demand_mw": get("demand_mw"), "production_mw": get("production_mw"),
-                "solar_mw": get("solar_mw") or 0.0, "wind_mw": get("wind_mw") or 0.0}
+    def _publish(self) -> None:
+        """Called with the lock held (or before the worker starts): a fresh snapshot of the runner."""
+        r = self._runner
+        self._snap = _Snapshot(day=self._day, curve=r.curve, records=list(r.records),
+                               metrics=r.ledger.metrics(), goal_summary=r.ledger.goal_summary(),
+                               stored_mwh=r.sim.stored_mwh, day_over=r.done)
 
     def _objective_sentences(self) -> list[tuple[int, bool]]:
         """(index, also_has_goals) of every sentence that states an objective."""
@@ -351,51 +317,3 @@ class Backend:
             if src and src in sentence.lower():
                 return i
         return None
-
-
-# ---------------------------------------------------------------------- shapes
-
-def to_interval(rec: dict) -> dict:
-    """A loop record in the dashboard's Interval shape (frontend/src/api/types.ts)."""
-    f, site, d, g = rec["features"], rec["site"], rec["decision"], rec["guard"]
-    return {
-        "time": rec["time"],
-        "price_eur_mwh": rec["price_eur_mwh"],
-        "break_even": f.get("break_even"),
-        "demand_mw": rec["demand_mw"],                 # actual
-        "production_mw": rec["production_mw"],         # actual, before curtailment
-        **_split_production(rec["production_mw"], f.get("solar_mw"), f.get("wind_mw")),
-        "soc_mwh": rec["soc_after_mwh"],               # at the END of the interval
-        "decision": {
-            "battery_fraction": d.get("battery_fraction"),
-            "curtail": bool(d.get("curtail")),
-            "source": d.get("source"),
-            "confidence": d.get("confidence") or "low",
-            "reasoning": d.get("reasoning") or "",
-            "explanation_for_operator": d.get("explanation_for_operator") or "",
-            "fallback_reason": d.get("fallback_reason"),
-        },
-        "guard": {
-            "battery_setpoint_mw": site["setpoint_applied_mw"],   # what the battery actually ran
-            "curtail_mw": site["curtailed_mw"],                   # what was actually switched off
-            "clipped": bool(g.get("clipped")) or bool(site["clipped"]),
-            "applied_rules": list(g.get("applied_rules") or []),
-        },
-        "settlement": {k: rec[k] for k in ("grid_import_mwh", "grid_export_mwh", "energy_cost_eur", "wear_eur",
-                                           "profit_eur", "no_battery_profit_eur", "value_added_eur")},
-    }
-
-
-def _split_production(actual_mw: float, solar_forecast: Any, wind_forecast: Any) -> dict:
-    """Solar and wind for the dashboard: the forecast's split, scaled so they add up to the
-    ACTUAL production (otherwise the energy-flow diagram does not balance)."""
-    solar, wind = max(0.0, solar_forecast or 0.0), max(0.0, wind_forecast or 0.0)
-    total = solar + wind
-    if total <= 0:
-        return {"solar_mw": 0.0, "wind_mw": round(actual_mw, 4)} if actual_mw > 0 else {"solar_mw": 0.0, "wind_mw": 0.0}
-    k = actual_mw / total
-    return {"solar_mw": round(solar * k, 4), "wind_mw": round(actual_mw - round(solar * k, 4), 4)}
-
-
-def _goal_states(runner: DayRunner) -> dict:
-    return {gid: st.to_dict() for gid, st in runner.ledger.goals.states.items()}

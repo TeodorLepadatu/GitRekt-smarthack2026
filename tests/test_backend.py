@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 
 from backend import Backend, create_app
 from goal_parser import GoalParser, GoalStore
+from dashboard import interval_payload
 from settlement import GoalTracker
+from tests.test_dashboard_contract import _check_interface, contract  # noqa: F401  (types.ts reader, fixture)
 
 GOALS = ["Maximise profit", "Store 6 MWh by 18:00", "Never sell below 50 EUR/MWh"]
 REPLY = json.dumps({"reasoning": "r", "battery_fraction": 0.2, "curtail": False,
@@ -152,11 +154,11 @@ def test_run_pause_and_day_end(setup):
 def test_pause_stops_the_clock(setup):
     b, c = setup
     c.post("/api/sim/run", json={"speed": 9000})            # 100 ms per interval
-    assert wait_for(lambda: len(b._snap.intervals) >= 2)
+    assert wait_for(lambda: len(b._snap.records) >= 2)
     c.post("/api/sim/run", json={"speed": 0})
-    n = len(b._snap.intervals)
+    n = len(b._snap.records)
     time.sleep(0.4)
-    assert len(b._snap.intervals) <= n + 1                  # at most the interval already running
+    assert len(b._snap.records) <= n + 1                  # at most the interval already running
 
 
 def test_reset_starts_the_day_again(setup):
@@ -276,3 +278,34 @@ def test_energy_flow_adds_up(setup):
     for iv in ivs:
         assert iv["solar_mw"] + iv["wind_mw"] == pytest.approx(iv["production_mw"], abs=1e-3)
         assert iv["solar_mw"] >= 0 and iv["wind_mw"] >= 0
+
+
+def test_every_response_matches_types_ts(setup, contract):
+    """The live API, checked against frontend/src/api/types.ts in both directions."""
+    b, c = setup
+    _check_interface(c.get("/api/state").json(), "StateSnapshot", contract)       # before the first interval
+    c.post("/api/goals", json={"text": "Keep 2 MWh backup overnight"})
+    b.wait_idle()
+    events = []
+    b.add_listener(events.append)
+    b.advance(50)
+    _check_interface(c.get("/api/state").json(), "StateSnapshot", contract)
+    _check_interface(c.get("/api/metrics").json(), "Metrics", contract)
+    day = c.get("/api/day").json()
+    _check_interface(day, "DayResponse", contract)
+    for slot in day["intervals"][:50]:
+        _check_interface(slot, "Interval", contract)
+    for slot in day["intervals"][50:]:
+        _check_interface(slot, "ForecastInterval", contract)
+    for goal in c.get("/api/goals").json():
+        _check_interface(goal, "Goal", contract)
+    _check_interface(c.post("/api/goals", json={"text": "keep some"}).json(), "AddGoalResponse", contract)
+    _check_interface(events[0], "Interval", contract)                              # the SSE "cycle" event
+
+
+def test_interval_shows_what_the_site_actually_did():
+    """The export limiter can switch off more than the guard asked for; the dashboard shows what happened."""
+    record = {"guard": {"battery_setpoint_mw": 2.1082, "curtail_mw": 4.19, "clipped": False, "applied_rules": []},
+              "site": {"setpoint_applied_mw": 2.1082, "curtailed_mw": 5.58, "clipped": False}}
+    assert interval_payload(record)["guard"]["curtail_mw"] == 5.58
+    assert interval_payload({"guard": record["guard"]})["guard"]["curtail_mw"] == 4.19     # no site: the guard's

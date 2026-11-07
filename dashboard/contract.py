@@ -97,6 +97,7 @@ def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
     features = rec.get("features") if isinstance(rec.get("features"), Mapping) else {}
     decision = rec.get("decision") if isinstance(rec.get("decision"), Mapping) else {}
     guard = rec.get("guard") if isinstance(rec.get("guard"), Mapping) else {}
+    site = rec.get("site") if isinstance(rec.get("site"), Mapping) else {}
 
     production = max(0.0, _num(rec.get("production_mw")))
     solar, wind = _split(production, features.get("solar_mw"), features.get("wind_mw"))
@@ -121,9 +122,12 @@ def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
                                else _str(decision.get("fallback_reason")),
         },
         "guard": {
-            "battery_setpoint_mw": _num(guard.get("battery_setpoint_mw")),
-            "curtail_mw": max(0.0, _num(guard.get("curtail_mw"))),
-            "clipped": bool(guard.get("clipped")),
+            # What the site actually did (the simulator's step, when the record has one): the
+            # battery may cut a setpoint at its limits, and the export limiter sizes curtailment
+            # on the measured surplus, so the guard's own numbers can differ from what happened.
+            "battery_setpoint_mw": _num(site.get("setpoint_applied_mw", guard.get("battery_setpoint_mw"))),
+            "curtail_mw": max(0.0, _num(site.get("curtailed_mw", guard.get("curtail_mw")))),
+            "clipped": bool(guard.get("clipped")) or bool(site.get("clipped")),
             "applied_rules": [str(r) for r in (guard.get("applied_rules") or [])],
         },
         "settlement": {name: _num(rec.get(name)) for name in SETTLEMENT_FIELDS},

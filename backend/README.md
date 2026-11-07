@@ -1,8 +1,10 @@
 # Backend
 
 FastAPI server for the dashboard (`frontend/`). It runs the day loop in the background and serves
-exactly the routes in `frontend/README.md` ("API contract"), with the shapes in
-`frontend/src/api/types.ts`.
+exactly the routes in `frontend/README.md` ("API contract"). The shapes come from
+`dashboard/contract.py`, the one place the loop's objects are translated into
+`frontend/src/api/types.ts`; the backend only adds the HTTP layer, the objective entry and the
+goal commands.
 
 ```
 dashboard ──HTTP/SSE──► backend/app.py ──reads snapshots / queues commands──► backend/service.py
@@ -16,6 +18,7 @@ dashboard ──HTTP/SSE──► backend/app.py ──reads snapshots / queues 
 ```bash
 python -m backend --no-llm --start 11:15        # rule-based decisions, no Ollama needed
 python -m backend --model qwen3:4b              # decisions and goal parsing by the LLM
+python -m backend --date 2026-06-15             # a real day: ML forecasts + ENTSO-E prices
 ```
 
 Then the dashboard against it (needs Node; `--host` only when running it in Docker):
@@ -30,6 +33,7 @@ cd frontend && npm install && npm run dev:api   # http://localhost:5173, proxies
 | `--no-llm` | off | rule-based fallback and rule-based goal parser only |
 | `--start` | `00:00` | pre-run the day up to this time (the frontend mock starts at 11:15) |
 | `--start-soc` | `4.0` | stored energy at 00:00, MWh |
+| `--date` | demo day | a real day (`loop.real_day`): ML forecasts scaled to the site + ENTSO-E prices; `--plan` settles on the forecasts |
 | `--goals-path` | `Settings().goals_path` | where goals are saved; if empty, starts with "Maximise profit", "Store 6 MWh by 18:00", "Never sell below 50 EUR/MWh" |
 | `--log` | none | every interval record as JSONL |
 | `--host`, `--port` | `127.0.0.1`, `8000` | |
@@ -50,7 +54,7 @@ cd frontend && npm install && npm run dev:api   # http://localhost:5173, proxies
 | `GET /api/health` | `{"status": "ok"}` |
 
 In an `Interval`, `guard.battery_setpoint_mw` and `guard.curtail_mw` are what the battery and the
-export limiter **actually** did (from the simulator), `demand_mw`/`production_mw` are actual values,
+export limiter **actually** did (the simulator's step, in `dashboard.interval_payload`), `demand_mw`/`production_mw` are actual values,
 and `soc_mwh` is the stored energy at the end of the interval.
 
 ## How it works
@@ -67,8 +71,8 @@ and `soc_mwh` is the stored energy at the end of the interval.
 - **The stream** is async and notices a closed browser tab, so dead connections are released and the
   server shuts down cleanly.
 
-The day itself is `loop.demo_day()` until real price and forecast feeds are connected. The ML models
-in `predictions/` forecast national demand and production, so they need scaling to the site first.
+The day is `loop.demo_day()` by default, or a real day with `--date` (`loop/real_day.py` scales the
+national ML forecasts to the site).
 
 ## Tests
 
@@ -78,4 +82,5 @@ python -m pytest tests/test_backend.py
 
 Every route and its shape, run / pause / reset / day end, goals (vague, add, delete with
 renumbering), the SSE stream on a real uvicorn server (including a client disconnecting), and an
-LLM-driven run.
+LLM-driven run. `test_every_response_matches_types_ts` checks every live response against
+`frontend/src/api/types.ts` in both directions, with the reader from `tests/test_dashboard_contract.py`.
