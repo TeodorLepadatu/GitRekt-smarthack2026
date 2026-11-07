@@ -1,12 +1,12 @@
-from llm.decision import DecisionAgent, DecisionResult, LLMDecision, parse_decision
-from llm.ollama_client import ChatResult, LLMError, OllamaClient
+from llm.decision import DECISION_SCHEMA, DecisionAgent, LLMDecision
+from llm.ollama_client import ChatClient, ChatResult, LLMError, OllamaClient
 
 __all__ = [
+    "DECISION_SCHEMA",
+    "ChatClient",
     "ChatResult",
     "DecisionAgent",
-    "DecisionResult",
     "LLMDecision",
     "LLMError",
     "OllamaClient",
-    "parse_decision",
 ]

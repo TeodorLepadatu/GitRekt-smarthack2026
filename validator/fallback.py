@@ -21,18 +21,15 @@ Rules, in order:
 
 from __future__ import annotations
 
-import math
 from typing import Any, Mapping, Optional
+
+from common import finite_float
 
 from .schema import FRACTION_MAX, FRACTION_MIN, SOURCE_FALLBACK, Decision
 
 
 def _num(features: Mapping[str, Any], key: str) -> Optional[float]:
-    value = features.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    value = float(value)
-    return value if math.isfinite(value) else None
+    return finite_float(features.get(key))
 
 
 def _clamp(x: float) -> float:

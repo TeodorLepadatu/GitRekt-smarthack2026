@@ -1,7 +1,9 @@
 """Holds the user's goal sentences and the active GoalConfig.
 
-The parser runs only when the sentences change. A config with open questions is not activated:
-the previous config stays in force until the user clarifies.
+The parser runs only when the sentences change. A result with open questions is
+not activated: the previous config stays in force until the user clarifies, so
+the guard never enforces a half-understood set of goals. The active config is
+saved to JSON and reloaded on start.
 """
 
 from __future__ import annotations
@@ -9,8 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from goals.parser import GoalParser, ParseResult
-from goals.schema import GoalConfig
+from .parser import GoalParser
+from .schema import GoalConfig, ParseResult
 
 
 class GoalStore:
@@ -22,12 +24,13 @@ class GoalStore:
         self._load()
 
     def set(self, sentences: list[str]) -> ParseResult:
-        sentences = [s.strip() for s in sentences if s.strip()]
+        """Replace the goal sentences. Activates the new config only if nothing is unclear."""
+        sentences = [s.strip() for s in sentences if s and s.strip()]
         if sentences == self.sentences:
-            return ParseResult(self.config)
+            return ParseResult(self.config, source="stored")
 
         result = self.parser.parse(sentences)
-        if result.ok:
+        if not result.needs_clarification:
             self.sentences, self.config = sentences, result.config
             self._save()
         return result
@@ -42,10 +45,10 @@ class GoalStore:
         if self.path and self.path.exists():
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.sentences = data["sentences"]
-            self.config = GoalConfig.model_validate(data["config"])
+            self.config = GoalConfig.from_dict(data["config"])
 
     def _save(self) -> None:
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            data = {"sentences": self.sentences, "config": self.config.model_dump()}
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            data = {"sentences": self.sentences, "config": self.config.to_dict()}
+            self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

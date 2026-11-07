@@ -1,27 +1,31 @@
 """Checks the goal parser against the real LLM.
 
-Skipped unless Ollama is running and the model is pulled:
-    ollama pull qwen3:4b
+Skipped unless Ollama is running and the goal model (config.Settings.goal_model) is pulled:
+    ollama pull qwen3.5:4b          # or set ENERGY_AGENT_GOAL_MODEL
     python -m pytest tests/test_goal_parser_llm.py -v
 """
-import json
 import unittest
-import urllib.request
 
+import httpx
+
+from config import Settings
 from goal_parser import parse_goals
-from goal_parser.llm import DEFAULT_HOST, DEFAULT_MODEL, OllamaClient
+from llm import OllamaClient
+
+SETTINGS = Settings()
+MODEL = SETTINGS.goal_model
 
 
 def _model_available() -> bool:
     try:
-        with urllib.request.urlopen(f"{DEFAULT_HOST}/api/tags", timeout=2) as resp:
-            names = {m["name"] for m in json.loads(resp.read()).get("models", [])}
+        resp = httpx.get(f"{SETTINGS.ollama_host}/api/tags", timeout=2)
+        names = {m["name"] for m in resp.json().get("models", [])}
     except Exception:
         return False
-    return DEFAULT_MODEL in names or f"{DEFAULT_MODEL}:latest" in names
+    return MODEL in names or f"{MODEL}:latest" in names
 
 
-@unittest.skipUnless(_model_available(), f"Ollama model {DEFAULT_MODEL} not available")
+@unittest.skipUnless(_model_available(), f"Ollama model {MODEL} not available")
 class RealLLMTest(unittest.TestCase):
     CASES = {
         "I want to maximise profit": ("max_profit", []),
@@ -37,7 +41,7 @@ class RealLLMTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.llm = OllamaClient()
+        cls.llm = OllamaClient(MODEL, SETTINGS)
 
     def test_plan_examples(self):
         for text, (objective, expected) in self.CASES.items():

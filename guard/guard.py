@@ -11,6 +11,7 @@ guard(decision, state, goal_config) -> GuardResult
 
 Input `decision` is the validator output (validator.Decision or its dict):
     {"battery_fraction": float in [-1, 1], "curtail": bool, "source": "llm"|"fallback"}
+Input `goal_config`: the goal parser's GoalConfig, its to_dict(), or None.
 Input `state` (feature builder / sensors for this interval):
     {"time": "15:00", "stored_mwh": 3.5, "net_mw": 0.4, "price_now": 95,
      "production_mw": 5.0 (optional, caps curtailment)}
@@ -23,11 +24,11 @@ Sign convention: setpoint > 0 = CHARGE, < 0 = DISCHARGE. Never raises.
 
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Optional
 
-from .config import BatteryConfig
+from battery import BatteryConfig
+from common import finite_float as _num
 from .goals import Bounds, apply_min_sell, apply_reserve, hard_goals, to_minutes
 
 EPS = 1e-9
@@ -54,17 +55,10 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _num(value: Any) -> Optional[float]:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    value = float(value)
-    return value if math.isfinite(value) else None
-
-
 def guard(
     decision: Any,
     state: Mapping[str, Any],
-    goal_config: Optional[Mapping[str, Any]] = None,
+    goal_config: Any = None,
     cfg: BatteryConfig = BatteryConfig(),
 ) -> GuardResult:
     """Turn a validated decision into safe setpoints. Never raises."""

@@ -4,15 +4,13 @@ Flow:  call LLM (with timeout) -> validate -> on any failure, rule-based fallbac
 It always returns a Decision and never raises, so the 15-minute cycle keeps going.
 
 The LLM call is injectable (llm_call=...), so tests and teammates can plug in
-a fake model or their own client. The default talks to a local Ollama server
-with the settings from the plan: JSON mode, temperature 0, num_ctx 8192.
+a fake model or their own client. The default is llm.DecisionAgent, which uses
+the shared Ollama client and config.Settings (JSON schema, temperature 0, num_ctx 8192).
 """
 
 from __future__ import annotations
 
-import json
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any, Callable, Mapping, Optional
@@ -29,28 +27,17 @@ from .validator import validate
 
 LLMCall = Callable[[str], Any]
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen3:4b"
+_default_agent = None
 
 
-def ollama_generate(
-    prompt: str,
-    model: str = OLLAMA_MODEL,
-    url: str = OLLAMA_URL,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-) -> str:
-    """Call a local Ollama server and return the raw response text."""
-    body = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "format": "json",
-        "stream": False,
-        "think": False,
-        "options": {"temperature": 0, "num_ctx": 8192},
-    }).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        return json.loads(resp.read().decode("utf-8"))["response"]
+def default_llm_call(prompt: str) -> str:
+    """The decision model via llm.DecisionAgent (created on first use)."""
+    global _default_agent
+    if _default_agent is None:
+        from llm import DecisionAgent  # lazy: the validator itself needs no HTTP client
+
+        _default_agent = DecisionAgent()
+    return _default_agent(prompt)
 
 
 def _call_with_timeout(llm_call: LLMCall, prompt: str, timeout_s: float) -> Any:
@@ -73,11 +60,11 @@ def decide(
 
     prompt:    the complete prompt from prompt assembly
     features:  feature-builder values for this interval (used by the fallback)
-    llm_call:  function prompt -> raw output; defaults to local Ollama
+    llm_call:  function prompt -> raw output (raise on failure); defaults to llm.DecisionAgent
     logger:    optional callback receiving a log record (prompt, raw, decision)
     """
     if llm_call is None:
-        llm_call = lambda p: ollama_generate(p, timeout_s=timeout_s)  # noqa: E731
+        llm_call = default_llm_call
 
     start = time.perf_counter()
     raw: Any = None

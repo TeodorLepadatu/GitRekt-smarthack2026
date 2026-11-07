@@ -1,9 +1,14 @@
-"""Runtime settings, read from environment variables with sensible defaults."""
+"""Runtime settings, read from environment variables with sensible defaults.
+
+The single place for the Ollama host, model names, timeouts and the site battery.
+"""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+
+from battery import BatteryConfig
 
 
 def _env_bool(name: str, default: bool | None) -> bool | None:
@@ -30,9 +35,12 @@ class Settings:
     think: bool | None = field(default_factory=lambda: _env_bool("ENERGY_AGENT_THINK", False))
     seed: int = 0
 
-    # Site parameters the goal parser uses for sanity checks.
-    battery_capacity_mwh: float = field(
-        default_factory=lambda: float(os.environ.get("ENERGY_AGENT_BATTERY_MWH", "10"))
+    # The site's battery: used by the guard and by the goal parser's capacity check.
+    battery: BatteryConfig = field(
+        default_factory=lambda: BatteryConfig(
+            capacity_mwh=float(os.environ.get("ENERGY_AGENT_BATTERY_MWH", "10")),
+            p_max_mw=float(os.environ.get("ENERGY_AGENT_BATTERY_MW", "3")),
+        )
     )
 
     goals_path: str = field(default_factory=lambda: os.environ.get("ENERGY_AGENT_GOALS_PATH", "data/goals.json"))

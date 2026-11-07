@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from common import goal_config_dict
+
 from .fmt import PromptAssemblyError, eur, frac, mw, num, qty
 
 HEADER = "USER GOALS (hard goals come before profit; within them, follow the objective)"
@@ -58,13 +60,10 @@ def render_user_goals(goal_config: Any, features: Mapping[str, Any]) -> str:
 
 
 def _as_dict(goal_config: Any) -> Mapping[str, Any]:
-    if goal_config is None:
-        return {}
-    if hasattr(goal_config, "to_dict"):
-        goal_config = goal_config.to_dict()
-    if not isinstance(goal_config, Mapping):
-        raise PromptAssemblyError(f"goal_config must be a mapping, got {type(goal_config).__name__}")
-    return goal_config
+    try:
+        return goal_config_dict(goal_config)
+    except TypeError as exc:
+        raise PromptAssemblyError(str(exc)) from exc
 
 
 def _reserve(g: Mapping[str, Any], p: Mapping[str, Any] | None, features: Mapping[str, Any]) -> str:

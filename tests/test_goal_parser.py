@@ -1,21 +1,25 @@
+import json
 import unittest
 
 from goal_parser import GoalParser, normalize_time, parse_goals
 from goal_parser.prompt import _EXAMPLES, SYSTEM_PROMPT
+from llm import ChatResult
 
 
 class FakeLLM:
-    """Returns a canned response (or raises) and counts calls."""
+    """A fake llm.ChatClient: returns a canned JSON reply (or raises) and counts calls."""
+
+    model = "fake"
 
     def __init__(self, response):
         self.response = response
         self.calls = 0
 
-    def chat_json(self, system, user, schema=None):
+    def chat_json(self, messages, schema, *, tag=""):
         self.calls += 1
         if isinstance(self.response, Exception):
             raise self.response
-        return self.response
+        return ChatResult(json.dumps(self.response), 0.0, self.model)
 
 
 def goals(result):

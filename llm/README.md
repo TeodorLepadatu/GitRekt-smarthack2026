@@ -1,11 +1,13 @@
-# llm — Ollama client and battery decision step
+# llm — the shared Ollama client and the battery decision step
 
 Every 15 minutes the small LLM chooses one battery action. It **compares numbers that are
 already computed and never calculates**. It never touches hardware either: what it returns goes
 to the validator and then the guard layer.
 
 ```
-prompt assembly ──► DecisionAgent.decide(prompt) ──► DecisionResult ──► validator + fallback
+prompt assembly ──► validator.decide(prompt, features) ──► Decision ──► guard
+                          │  llm_call (default)
+                    DecisionAgent(prompt) ──► raw text
                           │
                     OllamaClient.chat_json()  (temp 0, JSON schema, num_ctx 8192)
 ```
@@ -14,8 +16,8 @@ prompt assembly ──► DecisionAgent.decide(prompt) ──► DecisionResult 
 
 | File | Contents |
 |---|---|
-| `ollama_client.py` | `OllamaClient`, `ChatResult`, `LLMError`, the `ChatClient` protocol |
-| `decision.py` | `DecisionAgent`, the `LLMDecision` contract, `DecisionResult`, `parse_decision()` |
+| `ollama_client.py` | `OllamaClient`, `ChatResult`, `LLMError`, the `ChatClient` protocol. The **only** Ollama client in the project: the goal parser and the decision step both use it |
+| `decision.py` | `DecisionAgent`, the `LLMDecision` contract and its `DECISION_SCHEMA` |
 
 ## Decision contract
 
@@ -44,40 +46,25 @@ because fields are generated in schema order.
 
 ## Usage
 
+Normally you don't call the agent yourself: `pipeline.run_cycle()` (or `validator.decide()`) uses
+it by default. To call it directly:
+
 ```python
 from llm import DecisionAgent
+from validator import decide
 
-agent = DecisionAgent()
-result = agent.decide(prompt_text)   # full prompt from prompt assembly
-
-if result.ok:
-    d = result.decision              # LLMDecision
-    print(d.battery_fraction, d.explanation_for_operator)
-else:
-    print(result.error, result.errors)   # hand to the fallback policy
+agent = DecisionAgent()                     # model from config.Settings.decision_model
+raw = agent(prompt_text)                    # raw JSON text; raises LLMError if Ollama fails
+decision = decide(prompt_text, features, llm_call=agent)   # parsed, checked, fallback on failure
 ```
 
-### `DecisionResult`
+The agent **does not parse or validate**. That is the validator's job (`validator/validator.py`),
+so there is one definition of a valid decision. `LLMDecision` exists only to produce
+`DECISION_SCHEMA`, which Ollama uses to constrain decoding. Ollama errors are raised as `LLMError`
+so the validator records them as `llm_error` in the reliability metrics.
 
-`decide()` **never raises**. Every failure ends up in the result:
-
-| Field | Set when |
-|---|---|
-| `decision` | Output is valid JSON **and** matches `LLMDecision` |
-| `raw` | Always, if the model answered (exact text) |
-| `data` | The output was a JSON object, even one that breaks the contract. The validator can inspect it |
-| `error` | Timeout, HTTP failure, invalid JSON, or a contract mismatch |
-| `errors` | Per-field validation messages, e.g. `battery_fraction: Input should be less than or equal to 1` |
-| `latency_s`, `model` | For the latency and reliability metrics |
-
-`parse_decision(raw)` is the same parsing step as a standalone function. It also strips Markdown
-code fences around the JSON. Use it to replay logged responses.
-
-### Custom system prompt
-
-`DecisionAgent(system_prompt=...)` replaces the short default system message. The main
-instructions (rules, solved examples, current situation, USER GOALS) belong in the user prompt,
-which prompt assembly builds.
+The assembled prompt already contains the role, rules and output format, so no system message is
+sent by default. `DecisionAgent(system_prompt=...)` adds one if needed.
 
 ## Ollama client
 
@@ -101,7 +88,7 @@ failures are ignored so they can never break a control cycle.
 ### Testing without Ollama
 
 Anything with a `model` attribute and a `chat_json(messages, schema, *, tag="")` method that
-returns a `ChatResult` can be passed as `client=`. See the `FakeClient` in `tests/test_goals.py`.
+returns a `ChatResult` can be passed as `client=`. See the `FakeClient` in `tests/test_decision.py` or `tests/test_pipeline.py`.
 
 ## Configuration
 
@@ -109,6 +96,7 @@ returns a `ChatResult` can be passed as `client=`. See the `FakeClient` in `test
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | |
 | `ENERGY_AGENT_MODEL` | `qwen3.5:4b` | decision model (must be pulled: `ollama pull qwen3.5:4b`) |
+| `ENERGY_AGENT_GOAL_MODEL` | `ENERGY_AGENT_MODEL` | goal parser model |
 | `ENERGY_AGENT_TIMEOUT_S` | `60` | per request |
 | `ENERGY_AGENT_NUM_CTX` | `8192` | |
 | `ENERGY_AGENT_THINK` | `false` | `true` to enable thinking; empty to not send the flag |
@@ -116,6 +104,6 @@ returns a `ChatResult` can be passed as `client=`. See the `FakeClient` in `test
 
 ## Not in this folder
 
-- **Validator + fallback:** range clamping and the rule-based policy that runs when `result.ok` is false
+- **Validator + fallback:** parsing, range clamping and the rule-based policy that runs when the LLM fails
 - **Guard layer:** MW conversion, SoC and power limits, hard-goal enforcement
 - **Prompt assembly:** building the ~2.5k-token prompt that `decide()` receives

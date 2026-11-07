@@ -144,6 +144,12 @@ class GoalConfig:
     def to_dict(self) -> dict[str, Any]:
         return {"objective": self.objective, "goals": [g.to_dict() for g in self.goals]}
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "GoalConfig":
+        """Inverse of :meth:`to_dict` (e.g. a config saved by :class:`GoalStore`)."""
+        return cls(objective=data.get("objective") or DEFAULT_OBJECTIVE,
+                   goals=[Goal(**g) for g in data.get("goals") or []])
+
 
 @dataclass(frozen=True)
 class Clarification:
@@ -164,7 +170,7 @@ class ParseResult:
 
     config: GoalConfig
     clarifications: list[Clarification] = field(default_factory=list)
-    source: str = "rules"  # "llm" | "rules"
+    source: str = "rules"  # "llm" | "rules" | "stored" (unchanged goals, from GoalStore)
 
     @property
     def needs_clarification(self) -> bool:

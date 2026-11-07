@@ -1,46 +1,41 @@
 # tests
 
-Unit tests for `goals/` and `llm/`. They run **without Ollama**: every LLM call is replaced by a
-fake client that returns a fixed reply.
+Tests for the goal parser, the decision step, prompt assembly and the full pipeline. They run
+**without Ollama**: every LLM call is replaced by a fake client that returns a fixed reply. The
+guard and validator keep their own tests in `guard/tests/` and `validator/tests/`.
 
 ## Running
 
 From the repository root:
 
 ```bash
-python -m pytest -q
+pytest -q
 ```
 
-Use `python -m pytest`, not bare `pytest`. Running it as a module adds the repository root to
-`sys.path`, so `import goals` and `import llm` resolve. Bare `pytest` currently fails with
-`ModuleNotFoundError`. To fix that, add `pythonpath = .` to a `pytest.ini`, or move `conftest.py`
-to the repository root.
+`pytest.ini` puts the repository root on `sys.path` and collects `tests/`, `guard/tests/` and
+`validator/tests/`, so this one command runs everything.
 
 ## Files
 
 | File | Covers |
 |---|---|
-| `test_goals.py` | Goal parser post-processing and `GoalStore` |
-| `test_decision.py` | Parsing of the decision LLM's output (`parse_decision`) |
-| `conftest.py` | Empty; place for shared fixtures |
+| `test_pipeline.py` | End to end: goal parser → prompt assembly → decision agent (fake) → validator → guard |
+| `test_prompt_assembly.py` | Solved-example numbers recomputed from `battery.BatteryConfig`; prompt rendering |
+| `test_goal_parser.py` | Rule parser, checks on the LLM's output, unit/time conversion, clarifications |
+| `test_goal_parser_llm.py` | Goal parser against the real model; skipped unless Ollama has `Settings().goal_model` |
+| `test_goal_store.py` | `GoalStore`: parse only on change, keep the old config while questions are open, save/reload |
+| `test_decision.py` | `DecisionAgent` sends the prompt with the schema; Ollama errors reach the validator as `llm_error` |
 
-### `test_goals.py`
-
-| Test | Checks |
-|---|---|
-| `test_parses_contract_example` | Output matches the plan's goal-config contract exactly. Checks ids, `until = by` default and hard flags |
-| `test_vague_goal_asks_back` | Missing amount or time produces a question, not a guess |
-| `test_reserve_above_capacity_asks_back` | A reserve above battery capacity is rejected with a question |
-| `test_bad_time_asks_back` | Times that aren't `HH:MM` (e.g. `6pm`) produce a question |
-| `test_store_parses_only_on_change_and_keeps_old_config_on_questions` | Same sentences don't call the LLM again. A vague edit leaves the previous config active. The config is saved and reloaded |
-
-### `test_decision.py`
+### `test_pipeline.py`
 
 | Test | Checks |
 |---|---|
-| `test_valid_decision` | A contract-conforming reply parses into `LLMDecision` |
-| `test_invalid_json` | Non-JSON → `ok` false, `data` None |
-| `test_out_of_range_keeps_data_for_validator` | `battery_fraction` 3.15 fails the contract, but `data` and `errors` are kept for the validator |
+| `test_plan_example_runs_end_to_end_with_goal_parser_object` | Plan section 5 example: 0.29 → 0.87 MW, goals checked by the guard |
+| `test_object_and_dict_goal_config_give_the_same_result` | `GoalConfig` and its `to_dict()` are interchangeable |
+| `test_guard_enforces_goal_against_llm` | An LLM that sells before a reserve deadline is overridden (forced charge) |
+| `test_ollama_down_falls_back_and_still_meets_goal_pace` | LLM failure → fallback, reason `llm_error`, still at goal pace |
+| `test_broken_features_never_reach_the_llm` | Prompt assembly failure → fallback (`prompt_error`), guard still runs |
+| `test_guard_uses_the_given_battery` | The battery passed to `run_cycle` is the one the guard uses |
 
 ## The fake client
 
@@ -54,16 +49,13 @@ class FakeClient:
         return ChatResult(json.dumps(self.reply), 0.0, self.model)
 ```
 
-Pass it as `GoalParser(client=FakeClient(...))` or `DecisionAgent(client=...)`. The reply is
-**what the LLM would have returned**, so the tests exercise the deterministic code around the
-model, not the model itself. You can change `client.reply` in the middle of a test to simulate a
-later parse.
+It implements `llm.ChatClient`, so it works for both `GoalParser(FakeClient(...))` and
+`DecisionAgent(client=FakeClient(...))`. The reply is **what the LLM would have returned**, so the
+tests exercise the deterministic code around the model, not the model itself.
 
 ## Not covered yet
 
-- **Live model behaviour.** Nothing checks that a real model (e.g. `qwen3.5:4b`) extracts goals
-  correctly or returns valid decisions. The plan's target is at least 99% valid JSON over a
-  simulated week. Live runs with Mistral dropped goals, so a live test marked to skip when Ollama is
-  unavailable is the next one to add.
+- **Live decision model.** Nothing checks that a real model returns valid decisions. The plan's
+  target is at least 99% valid JSON over a simulated week.
 - **`OllamaClient` transport.** Timeouts, the `think`-flag retry and JSONL logging are not tested.
   `httpx.MockTransport` would cover them.

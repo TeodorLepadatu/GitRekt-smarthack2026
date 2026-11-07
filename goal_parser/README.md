@@ -28,13 +28,15 @@ user a question instead of guessing.
 ### One-off parse
 
 ```python
+from config import Settings
 from goal_parser import parse_goals
-from goal_parser.llm import OllamaClient
+from llm import OllamaClient
 
+settings = Settings()
 result = parse_goals(
     "Maximise profit. Store 6 MWh by 18:00. Never sell below €50/MWh",
-    llm=OllamaClient(),          # leave out to use only the rule-based parser
-    battery_capacity_mwh=10,     # optional: rejects reserves larger than the battery
+    llm=OllamaClient(settings.goal_model, settings),   # leave out to use only the rule-based parser
+    battery_capacity_mwh=settings.battery.capacity_mwh,  # optional: rejects reserves larger than the battery
 )
 
 result.config.to_dict()   # the goal config JSON shown above
@@ -51,9 +53,9 @@ ignores changes in case or spacing), and takes the user's answers to its questio
 
 ```python
 from goal_parser import GoalParser
-from goal_parser.llm import OllamaClient
+from llm import OllamaClient
 
-parser = GoalParser(OllamaClient(), battery_capacity_mwh=10)
+parser = GoalParser(OllamaClient(settings.goal_model, settings), battery_capacity_mwh=10)
 
 result = parser.parse("Maximise profit. Keep some energy for the evening")
 # result.clarifications[0].question
@@ -66,7 +68,23 @@ parser.parse("Maximise profit. Keep some energy for the evening (3 MWh by 19:00)
 ```
 
 Goals that were understood are always in `result.config`, even while other goals are waiting for
-an answer, so the rest of the pipeline can keep running.
+an answer.
+
+### Keeping the active goals: `GoalStore`
+
+`GoalStore` holds the goal sentences and the **active** config that the guard and prompt assembly
+use. A new set of sentences is activated only when nothing is unclear; while questions are open the
+previous config stays in force. The active config is saved to JSON and reloaded on start.
+
+```python
+from goal_parser import GoalParser, GoalStore
+
+store = GoalStore(GoalParser(OllamaClient(settings.goal_model, settings)), settings.goals_path)
+result = store.set(["Store 6 MWh by 18:00", "Never sell below €50/MWh"])   # parses (changed)
+store.set(["Store 6 MWh by 18:00", "Never sell below €50/MWh"])            # source "stored": no parse
+store.add("Keep some energy for later")  # has a question -> store.config is unchanged
+store.config                             # pass this to pipeline.run_cycle()
+```
 
 ### What the parser returns
 
@@ -77,7 +95,7 @@ an answer, so the rest of the pipeline can keep running.
 | `config` | `GoalConfig` with everything that was understood |
 | `clarifications` | list of `Clarification(source_text, question)` to ask the user |
 | `needs_clarification` | `True` if there is at least one question |
-| `source` | `"llm"` or `"rules"` |
+| `source` | `"llm"`, `"rules"`, or `"stored"` (unchanged goals returned by `GoalStore`) |
 | `to_dict()` | `{"status": "ok" \| "needs_clarification", "source", "config", "clarifications"}` |
 
 `GoalConfig.to_dict()` is the data contract for the other components:
@@ -108,7 +126,7 @@ user text
 ┌────────────────────┐  raw goals:   ┌───────────────────────────┐   ok   ┌──────────────────────┐
 │ LLM (Qwen3 4B via  │ numbers +     │ Checks against the user's │ ─────► │ Validation +         │──► ParseResult
 │ Ollama) extracts   │ units as      │ text (parser.py)          │        │ conversion           │    (source: "llm")
-│ (prompt.py, llm.py)│ written ────► │                           │        │ (schema.py)          │
+│ (prompt.py)        │ written ────► │                           │        │ (schema.py)          │
 └────────────────────┘               └───────────────────────────┘        └──────────────────────┘
          │ error / timeout / not running        │ rejected
          ▼                                      ▼
@@ -120,7 +138,7 @@ user text
 
 The design follows the plan's rule: **the LLM proposes, the code disposes.**
 
-### 1. The LLM extracts (`prompt.py`, `llm.py`)
+### 1. The LLM extracts (`prompt.py`, shared `llm.OllamaClient`)
 
 The model only *reads*: it copies each number and unit exactly as the user wrote them
 (`"amount": 1500, "unit": "kWh"`) and never converts or calculates. Settings:
@@ -188,27 +206,30 @@ Anything it does not recognise becomes a question, never a guess.
 | `schema.py` | output data classes, unit and time conversion, validation and questions |
 | `rules.py` | rule-based fallback parser and text helpers |
 | `prompt.py` | instructions, examples and JSON format sent to the LLM |
-| `llm.py` | minimal Ollama client (standard library only, no extra packages) |
+| `store.py` | `GoalStore`: active config, re-parse on change, JSON persistence |
+
+The LLM is called through the project's shared client, `llm.OllamaClient` (see `llm/README.md`),
+so host, model, timeout and logging all come from `config.Settings`.
 
 ---
 
 ## Setup
 
-The parser needs only Python 3.10+ and no extra packages. The LLM part needs
-[Ollama](https://ollama.com) with the model downloaded:
+The parser itself needs only Python 3.10+; without an LLM it uses only the rule-based parser
+(`source: "rules"`). The LLM part needs [Ollama](https://ollama.com) with the goal model pulled:
 
 ```bash
-ollama pull qwen3:4b
+ollama pull qwen3.5:4b
 ```
 
 | Environment variable | Default | Meaning |
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | where Ollama runs |
-| `GOAL_PARSER_MODEL` | `qwen3:4b` | which model to use |
+| `ENERGY_AGENT_GOAL_MODEL` | `ENERGY_AGENT_MODEL`, else `qwen3.5:4b` | which model parses goals |
+| `ENERGY_AGENT_BATTERY_MWH` | `10` | battery capacity used for the capacity check |
 
-`OllamaClient(model=..., host=..., timeout=60.0, num_ctx=8192)` can also be configured in code.
-Without Ollama the parser still works and uses only the rule-based parser (`source: "rules"`).
-Input longer than 2000 characters is not parsed; the user is asked to shorten it.
+All of these are read by `config.Settings`. Input longer than 2000 characters is not parsed; the
+user is asked to shorten it.
 
 ## Tests
 
@@ -217,5 +238,5 @@ python -m pytest tests/test_goal_parser.py       # fast, no LLM needed (uses a f
 python -m pytest tests/test_goal_parser_llm.py   # against the real model; skipped if it is not installed
 ```
 
-With `qwen3:4b` the parser gets 18 of 18 test sentences right (plan examples, unit conversions,
+With `qwen3:4b` (the model it was first tuned on) the parser got 18 of 18 test sentences right (plan examples, unit conversions,
 several goals in one sentence, corrections, vague goals) in about 1–4 seconds each.

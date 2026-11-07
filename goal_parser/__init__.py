@@ -9,6 +9,7 @@ from .schema import (
     ParseResult,
     normalize_time,
 )
+from .store import GoalStore
 
 __all__ = [
     "DEFAULT_OBJECTIVE",
@@ -17,6 +18,7 @@ __all__ = [
     "Goal",
     "GoalConfig",
     "GoalParser",
+    "GoalStore",
     "ParseResult",
     "normalize_time",
     "parse_goals",
