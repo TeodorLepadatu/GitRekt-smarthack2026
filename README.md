@@ -25,6 +25,41 @@ python -m loop --date 2026-06-15      # a real day: ML forecasts + ENTSO-E day-a
 python -m loop --date 2026-06-15 --llm --model qwen3.5:latest --goals "Store 6 MWh by 18:00"
 ```
 
+## Run the dashboard
+
+From the repository root, run:
+
+```powershell
+.\run_app.ps1
+```
+
+This opens the backend and frontend in separate PowerShell windows. The dashboard is available at
+`http://localhost:5173`. The launcher uses rule-based decisions by default and does not require Ollama.
+To use Ollama, change `$UseLLM = $false` to `$UseLLM = $true` in `run_app.ps1`.
+
+### Run with Docker
+
+With Docker Desktop running, start the complete app from the repository root:
+
+```powershell
+docker compose up --build
+```
+
+This starts the API with LLM mode enabled, starts Ollama, and downloads the default
+`qwen3.5:4b` model automatically. The first run may take several minutes and requires
+enough disk space for the model. To use another Ollama model:
+
+```powershell
+$env:ENERGY_AGENT_MODEL = "qwen3:4b"
+docker compose up --build
+```
+
+Open `http://localhost:5173`. Stop it with `Ctrl+C`, or run:
+
+```powershell
+docker compose down
+```
+
 `--date` replays a real day end to end. The forecasts are issued at the day-ahead gate
 (12:00 local the day before), so the models only see what was known then, and the books
 are settled against what was actually measured — the printed forecast error is honest.

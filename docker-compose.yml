@@ -1,0 +1,56 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - ollama-data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ollama-model:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      ENERGY_AGENT_MODEL: ${ENERGY_AGENT_MODEL:-qwen3.5:4b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$${ENERGY_AGENT_MODEL}\""]
+    volumes:
+      - ollama-data:/root/.ollama
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m backend --host 0.0.0.0 --port 8000
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      ENERGY_AGENT_MODEL: ${ENERGY_AGENT_MODEL:-qwen3.5:4b}
+      ENERGY_AGENT_GOAL_MODEL: ${ENERGY_AGENT_GOAL_MODEL:-qwen3.5:4b}
+    depends_on:
+      ollama-model:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_USE_MOCKS: "false"
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+
+volumes:
+  ollama-data:
