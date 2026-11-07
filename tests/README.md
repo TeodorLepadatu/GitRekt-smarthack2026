@@ -28,6 +28,7 @@ pytest -q
 | `test_simulator.py` | Site simulator: battery limits, grid trade, curtailment, energy balance, full cycles |
 | `test_simulator_settlement.py` | Settlement uses exactly the simulator's physics; ledger and simulator stay in step over a day loop |
 | `test_loop.py` | The clock: a whole day through feature builder → pipeline → simulator → settlement, failures, real-time pacing, CLI |
+| `test_backend.py` | Dashboard API: every route and shape, run/pause/reset, goals, SSE on a real server |
 
 ### `test_pipeline.py`
 
