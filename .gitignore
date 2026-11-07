@@ -224,3 +224,6 @@ data/total_load_day_ahead_actual/chunks
 
 # Runtime logs (LLM calls, written by llm/ollama_client.py)
 logs/
+
+# Runtime state: the active goals saved by goal_parser.GoalStore (config.Settings.goals_path)
+data/goals.json
