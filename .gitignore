@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Runtime logs (LLM calls, written by llm/ollama_client.py)
+logs/
