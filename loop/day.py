@@ -13,9 +13,17 @@ It never stops part-way through a day: if the features cannot be built, the
 interval falls back to the rule-based policy and the guard (which still
 enforces the hard goals); if an actual measurement is missing or broken, the
 forecast is used instead. Both are recorded in the interval's ``loop_warnings``.
+
+Peak shaving (``max_import_mw``): the guard caps the grid import on the
+forecast when it decides, and once the interval's actual demand and production
+are known the loop checks the cap again on those (a real site's controller reads
+the meter), sending any extra discharge back through the guard. Physics and the
+hard goals still have the last word; an import the battery cannot cover is
+recorded as ``import_cap_unmet`` and counted by the settlement.
 """
 from __future__ import annotations
 
+import dataclasses
 import time as _time
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -24,7 +32,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from battery import BatteryConfig
 from common import finite_float
 from feature_builder import PriceCurve, SiteForecast, build_features, hhmm
-from guard import guard
+from guard import GuardResult, guard
 from pipeline import CycleResult, run_cycle
 from settlement import DayLedger
 from settlement.settle import ImbalancePrices, scheduled_position_mwh
@@ -96,6 +104,7 @@ class DayRunner:
         timeout_s: float = DEFAULT_TIMEOUT_S,
         on_interval: Optional[Callable[[dict], None]] = None,
         log_path: Optional[str] = None,
+        max_import_mw: Optional[float] = None,
     ):
         self.cfg = battery or BatteryConfig()
         self.day = day
@@ -110,10 +119,15 @@ class DayRunner:
         self.feature_builder = feature_builder
         self.timeout_s = timeout_s
         self.on_interval = on_interval
+        limit = finite_float(max_import_mw)
+        if max_import_mw is not None and (limit is None or limit < 0):
+            raise LoopError(f"max_import_mw must be a number >= 0, got {max_import_mw!r}")
+        self.max_import_mw = limit  # None = no grid import cap
 
         start = self.cfg.e_min_mwh if start_soc_mwh is None else start_soc_mwh
         self.sim = SiteSimulator(self.cfg, start)
-        self.ledger = DayLedger(goal_config, battery=self.cfg, log_path=log_path)
+        self.ledger = DayLedger(goal_config, battery=self.cfg, log_path=log_path,
+                                import_limit_mw=self.max_import_mw)
         self.records: list[dict] = []
 
     # ------------------------------------------------------------------ control
@@ -143,6 +157,7 @@ class DayRunner:
         features, cycle = self._decide(t, forecast, warnings)
         demand, production = self._actual(i, forecast, warnings)
         imbalance, scheduled, setpoint = self._balance(i, cycle, forecast, demand, production, t, warnings)
+        cycle, setpoint = self._shave(i, cycle, setpoint, demand, production, t, warnings)
         site = self.sim.step(setpoint, demand, production, time=t)
         record = self.ledger.record(cycle, features, site, imbalance=imbalance, scheduled_mwh=scheduled)
 
@@ -234,9 +249,11 @@ class DayRunner:
             warnings.append(f"features could not be built ({exc}); rule-based fallback")
             features = self._minimal_features(t, forecast)
             decision = fallback_decision(features, REASON_FEATURE_ERROR, str(exc)[:200])
-            return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg))
+            return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg,
+                                                               max_import_mw=self.max_import_mw))
         return features, run_cycle(features, self.goal_config, llm_call=self.llm_call,
-                                   battery=self.cfg, timeout_s=self.timeout_s)
+                                   battery=self.cfg, timeout_s=self.timeout_s,
+                                   max_import_mw=self.max_import_mw)
 
     def _balance(
         self, i: int, cycle: Any, forecast: Any, demand: float, production: float,
@@ -280,7 +297,7 @@ class DayRunner:
                  "demand_mw": demand, "production_mw": production, "net_mw": production - demand}
         try:
             checked = guard({"battery_fraction": fraction, "curtail": curtail > 0},
-                            state, self.goal_config, self.cfg)
+                            state, self.goal_config, self.cfg, max_import_mw=self.max_import_mw)
         except Exception as exc:  # the interval must go on with the original setpoint
             warnings.append(f"balancing could not be checked ({exc}); kept the planned setpoint")
             return prices, scheduled, cycle.setpoint
@@ -288,6 +305,56 @@ class DayRunner:
         return prices, scheduled, SimpleNamespace(
             battery_setpoint_mw=checked.battery_setpoint_mw, curtail_mw=curtail,
         )
+
+    def _shave(
+        self, i: int, cycle: Any, setpoint: Any, demand: float, production: float,
+        t: str, warnings: list[str],
+    ) -> tuple[Any, Any]:
+        """Hold the grid import cap on the ACTUAL demand and production.
+
+        The guard capped the import on the forecast; if the measured net load
+        would still push the import over ``max_import_mw``, the setpoint is sent
+        back through the guard (with the measured state) and lowered by what it
+        allows. It only ever lowers the setpoint, so it cannot undo a hard goal's
+        forced charge; what it cannot cover is recorded as ``import_cap_unmet``.
+
+        Returns the cycle (its guard result updated when the cap acted, so the
+        record shows why) and the command to run.
+        """
+        if self.max_import_mw is None:
+            return cycle, setpoint
+        battery = finite_float(getattr(setpoint, "battery_setpoint_mw", None)) or 0.0
+        curtail = finite_float(getattr(setpoint, "curtail_mw", None)) or 0.0
+        net = production - demand
+        if battery - net <= self.max_import_mw + 1e-6:   # the meter agrees: within the cap
+            return cycle, setpoint
+        p_max = self.cfg.p_max_mw
+        state = {"time": t, "stored_mwh": self.sim.stored_mwh, "price_now": self.curve.prices[i],
+                 "demand_mw": demand, "production_mw": production, "net_mw": net}
+        try:
+            checked = guard({"battery_fraction": max(-1.0, min(1.0, battery / p_max)) if p_max > 0 else 0.0,
+                             "curtail": curtail > 0},
+                            state, self.goal_config, self.cfg, max_import_mw=self.max_import_mw)
+        except Exception as exc:  # the interval must go on with the setpoint it has
+            warnings.append(f"import cap could not be checked on the actuals ({exc}); kept the setpoint")
+            return cycle, setpoint
+        shaved = min(battery, checked.battery_setpoint_mw)
+        cap_rules = [r for r in checked.applied_rules if r.startswith("import_cap_")]
+        if shaved < battery - 1e-6:
+            warnings.append(f"import cap: actual net load {-net:.3f} MW, setpoint {battery:+.3f} -> "
+                            f"{shaved:+.3f} MW")
+        old = cycle.setpoint
+        if isinstance(old, GuardResult):
+            kept = [r for r in old.applied_rules if r not in ("import_cap_ok", "import_cap_unchecked")]
+            rules = kept + [r for r in cap_rules + ["import_cap_realtime"] if r not in kept]
+            new_guard = dataclasses.replace(
+                old, battery_setpoint_mw=round(shaved, 4), applied_rules=rules,
+                clipped=old.clipped or shaved < battery - 1e-3,
+                projected_import_mw=round(max(0.0, shaved - net), 4),
+                warnings=list(old.warnings) + [w for w in checked.warnings if w.startswith("import cap")],
+            )
+            cycle = CycleResult(getattr(cycle, "prompt", None), cycle.decision, new_guard)
+        return cycle, SimpleNamespace(battery_setpoint_mw=round(shaved, 4), curtail_mw=curtail)
 
     def _minimal_features(self, t: str, forecast: Any) -> dict[str, Any]:
         """What is known without the feature builder: enough for the fallback and the guard."""

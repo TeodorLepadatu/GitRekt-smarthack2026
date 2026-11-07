@@ -36,6 +36,13 @@ forecast error still happens and nothing can absorb it. ``value_added_eur``
 therefore counts what the battery earned by covering the gap, which is how a
 real battery earns most of its money.
 
+Grid import (peak shaving)
+--------------------------
+``grid_import_mw`` is the interval's average import power, the simulator's
+``grid_import_mwh / dt`` (= max(0, demand + battery + curtailed - production)).
+``no_battery_import_mw`` is the same without battery or curtailment,
+max(0, demand - production), the counterfactual ``no_battery_profit_eur`` uses.
+
 Without ``imbalance`` prices nothing changes: the deviation is not priced,
 ``imbalance_eur`` is 0 and ``profit`` is ``energy + wear`` as before.
 
@@ -126,6 +133,8 @@ class IntervalSettlement:
     scheduled_grid_mwh: float = 0.0   # the exchange promised on the forecast
     deviation_mwh: float = 0.0        # actual exchange - scheduled
     imbalance_eur: float = 0.0        # <= 0; 0 when the deviation is not priced
+    grid_import_mw: float = 0.0       # average import power over the interval
+    no_battery_import_mw: float = 0.0  # the same without battery or curtailment
     site_clipped: bool = False   # the setpoint did not fit the actual SoC and was cut
     warnings: list[str] = field(default_factory=list)
 
@@ -191,6 +200,8 @@ def settle(
         scheduled_grid_mwh=round(scheduled, 4),
         deviation_mwh=round(deviation, 4),
         imbalance_eur=round(imb, 2),
+        grid_import_mw=round(step.grid_import_mwh / cfg.interval_h, 4),
+        no_battery_import_mw=round(max(0.0, step.demand_mw - step.production_mw), 4),
         site_clipped=step.clipped,
         warnings=list(step.warnings),
     )

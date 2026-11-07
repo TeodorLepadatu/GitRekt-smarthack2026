@@ -102,6 +102,12 @@ export function ruleText(rule: string, goals: Goal[]): string | null {
     case "no_soc_hold":
     case "guard_error_hold":
       return "Safe mode: battery held";
+    case "import_cap_discharge":
+      return "Discharging to keep grid import under the limit";
+    case "import_cap_charge_limited":
+      return "Charging limited to keep grid import under the limit";
+    case "import_cap_unmet":
+      return "Warning: grid import above the limit, the battery can't cover it";
   }
   const m = /^goal_(.+)_(forced_charge|blocked_discharge|blocked_export|unreachable)$/.exec(rule);
   if (m) {

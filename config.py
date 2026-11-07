@@ -18,6 +18,17 @@ def _env_bool(name: str, default: bool | None) -> bool | None:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_limit(name: str) -> float | None:
+    """A non-negative MW limit, or None when unset, empty, "none" or "off" (= no limit)."""
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw in {"", "none", "off"}:
+        return None
+    value = float(raw)
+    if not value >= 0:
+        raise ValueError(f"{name} must be a number >= 0 MW, got {raw!r}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     ollama_host: str = field(default_factory=lambda: os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
@@ -42,6 +53,10 @@ class Settings:
             p_max_mw=float(os.environ.get("ENERGY_AGENT_BATTERY_MW", "3")),
         )
     )
+
+    # Peak shaving: the most the site may import from the grid, MW (15-minute average).
+    # None = no cap, behaviour unchanged. Enforced by the guard, recorded by the settlement.
+    max_import_mw: float | None = field(default_factory=lambda: _env_limit("ENERGY_AGENT_MAX_IMPORT_MW"))
 
     goals_path: str = field(default_factory=lambda: os.environ.get("ENERGY_AGENT_GOALS_PATH", "data/goals.json"))
     settlement_log_path: str | None = field(

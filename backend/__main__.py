@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--plan", action="store_true", help="with --date: settle on the forecasts, not the actuals")
     ap.add_argument("--imbalance", action="store_true",
                     help="with --date: charge for deviating from the promised grid position")
+    ap.add_argument("--max-import", type=float, default=None, metavar="MW",
+                    help="grid import cap for peak shaving, MW (default: ENERGY_AGENT_MAX_IMPORT_MW, unset = none)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -74,7 +76,8 @@ def main(argv: list[str] | None = None) -> None:
         day_factory = demo_day
 
     backend = Backend(store, llm_call=llm_call, battery=settings.battery, start_soc_mwh=args.start_soc,
-                      day_factory=day_factory, log_path=args.log)
+                      day_factory=day_factory, log_path=args.log,
+                      max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import)
     if args.date:
         backend.date = args.date
     if args.start != "00:00":

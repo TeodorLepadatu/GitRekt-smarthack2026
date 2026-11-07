@@ -42,10 +42,13 @@ def run_cycle(
     battery: Optional[BatteryConfig] = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     logger: Optional[Callable[[dict], None]] = None,
+    max_import_mw: Optional[float] = None,
 ) -> CycleResult:
     """Run one cycle. ``goal_config`` may be a GoalConfig, its dict, or None.
 
     ``llm_call`` defaults to llm.DecisionAgent; ``battery`` to ``Settings().battery``.
+    ``max_import_mw``: the grid import cap the guard enforces (None = no cap; the
+    CLIs pass ``Settings().max_import_mw``).
     """
     battery = battery or Settings().battery
     try:
@@ -56,4 +59,5 @@ def run_cycle(
                                      REASON_PROMPT_ERROR, str(exc)[:200])
     else:
         decision = decide(prompt, features, llm_call=llm_call, timeout_s=timeout_s, logger=logger)
-    return CycleResult(prompt, decision, guard(decision, features, goal_config, battery))
+    return CycleResult(prompt, decision,
+                       guard(decision, features, goal_config, battery, max_import_mw=max_import_mw))

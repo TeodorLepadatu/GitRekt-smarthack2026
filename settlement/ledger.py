@@ -15,6 +15,11 @@
   in ``warnings``). The SoC is taken from ``actual``, then ``features["stored_mwh"]``
   (the sensor value the guard used), then the ledger's own SoC after the last interval.
 
+Peak shaving: with ``import_limit_mw`` set, every record carries
+``import_limit_mw`` and ``import_limit_exceeded`` (grid_import_mw over the limit
+by more than IMPORT_TOL_MW), and ``metrics()`` adds the day's peak import, the
+no-battery peak and the count of intervals over the limit.
+
 Goal cost (plan section 2): profit given up versus a profit-only plan. That
 needs the same day run without the goals, so ``goal_costs`` takes a function
 that runs a whole day for a given goal config and returns its ledger.
@@ -33,6 +38,9 @@ from simulator import StepResult
 
 from .goals import GoalTracker
 from .settle import ImbalancePrices, IntervalSettlement, forecast_errors, settle, settle_interval
+
+
+IMPORT_TOL_MW = 1e-3  # setpoints and settled energies are rounded; smaller overshoots are rounding
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -57,8 +65,10 @@ class DayLedger:
         battery: Optional[BatteryConfig] = None,
         start_soc_mwh: Optional[float] = None,
         log_path: Optional[str] = None,
+        import_limit_mw: Optional[float] = None,
     ):
         self.cfg = battery or BatteryConfig()
+        self.import_limit_mw = finite_float(import_limit_mw)  # None = no grid import cap
         self.goals = GoalTracker(goal_config, self.cfg)
         self.soc_mwh = start_soc_mwh
         self.log_path = log_path
@@ -155,6 +165,9 @@ class DayLedger:
 
         rec = s.to_dict()
         rec.update({f"goal_{gid}": status for gid, status in statuses.items()})
+        rec["import_limit_mw"] = self.import_limit_mw
+        rec["import_limit_exceeded"] = (self.import_limit_mw is not None
+                                        and s.grid_import_mw > self.import_limit_mw + IMPORT_TOL_MW)
         rec["goals"] = {st.id: st.message for st in self.goals.states.values()}
         rec["profit_today_eur"] = round(sum(r["profit_eur"] for r in self.records) + s.profit_eur, 2)
         rec["forecast"] = forecast_errors(dict(features), s.demand_mw, s.production_mw)
@@ -194,6 +207,8 @@ class DayLedger:
         ]
         if s.curtail_mw > 0:
             parts.insert(2, f"curtail {s.curtail_mw:.2f} MW")
+        if rec.get("import_limit_exceeded"):
+            parts.append(f"IMPORT {s.grid_import_mw:.2f} MW > limit {self.import_limit_mw:g} MW")
         parts += [f"{gid}: {msg}" for gid, msg in rec["goals"].items()]
         return " | ".join(parts)
 
@@ -237,6 +252,7 @@ class DayLedger:
         llm = sum(1 for r in recs if r["decision"]["source"] == "llm")
         fallback = sum(1 for r in recs if r["decision"]["source"] == "fallback")
         clipped = sum(1 for r in recs if r["guard"]["clipped"])
+        peak = max(recs, key=lambda r: r.get("grid_import_mw", 0.0), default=None)
         return {
             "profit_today_eur": self.profit_eur,
             "energy_cost_eur": total("energy_cost_eur", 2),
@@ -264,6 +280,13 @@ class DayLedger:
             "demand_mae_mw": round(sum(dem_err) / len(dem_err), 4) if dem_err else None,
             "production_mae_mw": round(sum(prod_err) / len(prod_err), 4) if prod_err else None,
             "production_range_coverage": round(sum(in_range) / len(in_range), 4) if in_range else None,
+            # peak shaving: import power is the 15-minute average, MW
+            "import_limit_mw": self.import_limit_mw,
+            "peak_import_mw": round(peak.get("grid_import_mw", 0.0), 4) if peak else 0.0,
+            "peak_import_time": peak["time"] if peak and peak.get("grid_import_mw", 0.0) > 0 else None,
+            "peak_import_mw_no_battery": round(max((r.get("no_battery_import_mw", 0.0) for r in recs),
+                                                   default=0.0), 4),
+            "import_limit_exceeded_intervals": sum(1 for r in recs if r.get("import_limit_exceeded")),
         }
 
 
