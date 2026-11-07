@@ -48,7 +48,13 @@ cd frontend && npm install && npm run dev:api   # http://localhost:5173, proxies
 | `POST /api/goals {text}` | `{goals}`, or `{goals, question}` when the goal is unclear (nothing changes then) |
 | `DELETE /api/goals/{id}` | removes the sentence the goal came from; 404 if unknown |
 | `GET /api/metrics` | profit, energy sold / bought / curtailed, decision counts, goals met |
-| `GET /api/stream` | SSE: event `cycle` with each new `Interval`; `: ping` every 15 s |
+| `GET /api/stream` | SSE: event `cycle` with each new `Interval`, event `control` with the `ControlState` whenever it changes; `: ping` every 15 s |
+| `GET /api/control` | emergency `hold`, `override`, `autonomy` and the `pending` approval |
+| `POST /api/override {setpoint_mw, until}` | the operator's setpoint until `until` (guarded); 422 if out of range or in the past |
+| `DELETE /api/override` | back to the AI |
+| `POST /api/hold`, `DELETE /api/hold` | emergency hold on / off |
+| `PUT /api/autonomy {mode?, max_auto_mw?, ask_on_low_confidence?, timeout_s?}` | `autonomous`, `supervised` or `advisory`; only the fields sent change |
+| `POST /api/approvals/{id} {approve}` | answer the waiting proposal; 409 if it is no longer waiting |
 | `POST /api/sim/run {speed}` | 1 = real time, 600 = 1.5 s per interval, 0 = pause; after the day ends, starts a new one |
 | `POST /api/sim/reset` | pause and start again at 00:00 |
 | `GET /api/health` | `{"status": "ok"}` |
@@ -68,6 +74,11 @@ and `soc_mwh` is the stored energy at the end of the interval.
 - **Goals** go through `goal_parser.GoalStore`: an unclear sentence returns a question and leaves the
   active goals unchanged. Goal history follows the goal, not its id (ids are renumbered when a goal
   is deleted).
+- **Operator control is not queued.** `control.OperatorControl` outlives the days and is asked by the
+  loop at the start of every interval. When the autonomy mode makes a decision wait, the worker blocks
+  in it until the operator answers, the timeout runs out (the battery then holds), or an override or
+  hold replaces the proposal. A reset clears the override and lets a waiting proposal go; an
+  emergency hold stays until released.
 - **The stream** is async and notices a closed browser tab, so dead connections are released and the
   server shuts down cleanly.
 

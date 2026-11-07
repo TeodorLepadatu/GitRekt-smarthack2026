@@ -18,7 +18,7 @@ REPLY = json.dumps({"reasoning": "r", "battery_fraction": 0.2, "curtail": False,
                     "confidence": "low", "explanation_for_operator": "e"})
 
 INTERVAL_KEYS = {"time", "price_eur_mwh", "break_even", "demand_mw", "production_mw", "solar_mw", "wind_mw",
-                 "soc_mwh", "decision", "guard", "settlement"}
+                 "soc_mwh", "decision", "guard", "settlement", "control"}
 FORECAST_KEYS = {"time", "price_eur_mwh", "break_even", "demand_mw", "production_mw", "solar_mw", "wind_mw"}
 
 
@@ -288,7 +288,7 @@ def test_every_response_matches_types_ts(setup, contract):
     c.post("/api/goals", json={"text": "Keep 2 MWh backup overnight"})
     b.wait_idle()
     events = []
-    b.add_listener(events.append)
+    b.add_listener(lambda event, data: event == "cycle" and events.append(data))
     b.advance(50)
     _check_interface(c.get("/api/state").json(), "StateSnapshot", contract)
     _check_interface(c.get("/api/metrics").json(), "Metrics", contract)

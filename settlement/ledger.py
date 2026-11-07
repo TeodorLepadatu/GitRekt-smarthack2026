@@ -251,6 +251,7 @@ class DayLedger:
         hard = [st for st in states if st.hard]
         llm = sum(1 for r in recs if r["decision"]["source"] == "llm")
         fallback = sum(1 for r in recs if r["decision"]["source"] == "fallback")
+        operator = sum(1 for r in recs if r["decision"]["source"] == "operator")
         clipped = sum(1 for r in recs if r["guard"]["clipped"])
         peak = max(recs, key=lambda r: r.get("grid_import_mw", 0.0), default=None)
         return {
@@ -269,6 +270,7 @@ class DayLedger:
             "decisions_total": n,
             "decisions_llm": llm,
             "decisions_fallback": fallback,
+            "decisions_operator": operator,
             "decisions_clipped": clipped,
             "fallback_rate": round(fallback / n, 4) if n else 0.0,
             "clip_rate": round(clipped / n, 4) if n else 0.0,

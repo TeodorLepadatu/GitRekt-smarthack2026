@@ -7,6 +7,7 @@ import { Reveal } from "@/components/common/Reveal";
 import { actionKind, fallbackReasonText, fmtMw, rulesText, upNextText } from "@/lib/labels";
 import { intervalEnd } from "@/lib/utils";
 import type { TabId } from "@/components/layout/tabs";
+import { ControlPanel } from "@/components/control/ControlPanel";
 import { AiPanel } from "./AiPanel";
 import { DayLedger } from "./DayLedger";
 import { DecisionTrace } from "./DecisionTrace";
@@ -113,6 +114,20 @@ export function NowPage({ go }: { go: (t: TabId) => void }) {
         </div>
         <Reveal>
           <AiPanel iv={cur} socBefore={socBefore} goals={goals.data ?? []} maxPowerMw={state.data.max_power_mw} />
+        </Reveal>
+      </section>
+
+      {/* ---- operator control ---- */}
+      <section className="mt-20 flex flex-col gap-8">
+        <Reveal className="flex flex-col gap-3 border-t border-rule-strong pt-6">
+          <h2 className="font-serif text-4xl font-semibold tracking-tight">Operator control</h2>
+          <p className="max-w-[62ch] text-lg text-ink-2">
+            Set the battery yourself for a while, or choose how much the AI may do on its own. The emergency hold is at the bottom of
+            every page.
+          </p>
+        </Reveal>
+        <Reveal>
+          <ControlPanel />
         </Reveal>
       </section>
 
