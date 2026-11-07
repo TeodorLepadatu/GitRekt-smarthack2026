@@ -168,6 +168,59 @@ def test_too_many_points(client, window):
 
 
 # --------------------------------------------------------------------------- #
+# CSV: forecasts as CSV, and the /csv file routes
+# --------------------------------------------------------------------------- #
+def test_forecast_as_csv_matches_json(client, window):
+    import io
+    import pandas as pd
+    first, _ = window
+    ts = [first, first + DAY, first + 3 * DAY]
+    r = post(client, "/forecast", timestamps=ts, format="csv")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"]
+    csv = pd.read_csv(io.StringIO(r.text))
+    js = pd.DataFrame(post(client, "/forecast", timestamps=ts).json()["predictions"])
+    assert list(csv.columns) == list(js.columns)
+    assert csv.timestamp.tolist() == ts
+    assert np.allclose(csv.demand_mw, js.demand_mw) and np.allclose(csv.total_mw, js.total_mw)
+
+
+def test_csv_list(client):
+    files = {f["name"]: f for f in client.get("/csv").json()["files"]}
+    assert "dataset.csv" in files and "reports/eval_2026.csv" in files
+    assert files["dataset.csv"]["filterable"] and "actual_total_load" in files["dataset.csv"]["columns"]
+    assert not files["reports/eval_2026.csv"]["filterable"]
+    assert all(f["url"] == f"/csv/{n}" for n, f in files.items())
+
+
+def test_csv_download_full_and_filtered(client):
+    import io
+    import pandas as pd
+    full = client.get("/csv/reports/eval_2026.csv")
+    assert full.status_code == 200 and full.headers["content-type"].startswith("text/csv")
+    assert full.text.splitlines()[0].startswith("series,lead_h,mae")
+
+    start, end = 1772323200, 1772323200 + DAY            # 2026-03-01, one day
+    for s, e in [(start, end), (iso(start), iso(end))]:
+        part = client.get("/csv/dataset.csv", params={"start": s, "end": e})
+        assert part.status_code == 200
+        df = pd.read_csv(io.StringIO(part.text))
+        assert len(df) == 96 and df.timestamp.min() == start and df.timestamp.max() == end - STEP
+
+
+@pytest.mark.parametrize("path,params,code", [
+    ("/csv/nope.csv", {}, 404),
+    ("/csv/../core.py", {}, 404),                         # no path traversal
+    ("/csv/core.py", {}, 404),                            # only CSV files
+    ("/csv/reports/eval_2026.csv", {"start": 0}, 422),    # no timestamp column to filter
+    ("/csv/dataset.csv", {"start": "yesterday"}, 422),
+])
+def test_csv_errors(client, path, params, code):
+    assert client.get(path, params=params).status_code == code
+
+
+# --------------------------------------------------------------------------- #
 # value sanity over a full week
 # --------------------------------------------------------------------------- #
 def test_week_values_sane(client, window):
