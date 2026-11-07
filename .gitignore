@@ -221,3 +221,6 @@ __marimo__/
 
 data/actual_generation_per_production_type.csv
 data/total_load_day_ahead_actual/chunks
+
+# Runtime logs (LLM calls, written by llm/ollama_client.py)
+logs/
