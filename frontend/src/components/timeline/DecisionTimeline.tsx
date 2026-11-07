@@ -5,11 +5,12 @@ import { PanelError, PanelLoading } from "@/components/common/PanelState";
 import { cn } from "@/lib/utils";
 import { TimelineRow } from "./TimelineRow";
 
-type Filter = "all" | "backup" | "safety";
+type Filter = "all" | "backup" | "operator" | "safety";
 
 const filters: { id: Filter; label: string; test: (iv: Interval) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
   { id: "backup", label: "Backup rules", test: (iv) => iv.decision.source === "fallback" },
+  { id: "operator", label: "Operator involved", test: (iv) => iv.control.action !== "auto" },
   { id: "safety", label: "Changed by safety", test: (iv) => iv.guard.clipped },
 ];
 

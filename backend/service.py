@@ -10,6 +10,13 @@ intervals, never in the middle of one.
 The shapes come from dashboard/contract.py, the one place the loop's objects
 are translated into frontend/src/api/types.ts; this module only adds the
 objective entry and the goal commands the frontend's goal list needs.
+
+Operator control (override, emergency hold, autonomy, approvals) lives in one
+``control.OperatorControl`` that outlives the days and is handed to every
+DayRunner. Unlike goals, its commands are not queued: the loop asks it at the
+start of every interval, and while the loop waits for an approval the worker
+is blocked inside it, so an answer has to reach it directly. Every change is
+pushed to the listeners as a ``control`` event next to the ``cycle`` events.
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Optional
 
 from battery import BatteryConfig
+from control import Autonomy, OperatorControl, autonomy_from
 from dashboard import day_payload, goals_payload, interval_payload, metrics_payload, state_payload
 from goal_parser import GoalStore
 from goal_parser.rules import parse_raw
@@ -59,6 +67,7 @@ class Backend:
         clock: Callable[[], float] = _time.monotonic,
         log_path: Optional[str] = None,
         max_import_mw: Optional[float] = None,
+        autonomy: Optional[Autonomy] = None,
     ):
         self.goals = goal_store
         self.max_import_mw = max_import_mw  # grid import cap (peak shaving); None = none
@@ -76,7 +85,10 @@ class Backend:
         self._pending_goals = False
         self._pending_reset = False
         self._stopped = False
-        self._listeners: set[Callable[[dict], None]] = set()
+        self._listeners: set[Callable[[str, dict], None]] = set()
+        self.control = OperatorControl(max_power_mw=self.cfg.p_max_mw, autonomy=autonomy,
+                                       interval_min=round(self.cfg.interval_h * 60),
+                                       on_change=lambda snap: self._emit("control", snap))
         self._new_day()
         self._thread = threading.Thread(target=self._work, name="day-loop", daemon=True)
         self._thread.start()
@@ -151,6 +163,29 @@ class Backend:
             self._pending_goals = True
             self._cond.notify_all()
 
+    def control_state(self) -> dict:
+        return self.control.snapshot()
+
+    def set_override(self, setpoint_mw: float, until: str) -> dict:
+        """Run ``setpoint_mw`` from the next interval up to ``until`` (ControlError if not possible)."""
+        with self._cond:
+            now = self._runner.now
+        return self.control.set_override(setpoint_mw, until, now=now)
+
+    def clear_override(self) -> dict:
+        return self.control.clear_override()
+
+    def set_hold(self, on: bool) -> dict:
+        return self.control.set_hold(on)
+
+    def set_autonomy(self, **changes: Any) -> dict:
+        """Change some of the autonomy settings; the others stay (ControlError if invalid)."""
+        return self.control.set_autonomy(autonomy_from(self.control.autonomy, **changes))
+
+    def answer_approval(self, proposal_id: int, approve: bool) -> dict:
+        """Approve or reject the AI's waiting proposal (NoPendingApproval if it is not waiting)."""
+        return self.control.answer(proposal_id, approve)
+
     def run(self, speed: float) -> dict:
         """Run at ``speed`` (1 = real time, 600 = 1.5 s per interval); 0 pauses.
         Starting again after the day is over begins a new day."""
@@ -169,6 +204,7 @@ class Backend:
             self._speed = 0.0
             self._pending_reset = True
             self._cond.notify_all()
+        self.control.new_day()          # the worker may be waiting for an approval: let it go
         self.wait_idle()
         return self.sim_status()
 
@@ -185,12 +221,14 @@ class Backend:
             out.append(iv)
         return out
 
-    def add_listener(self, fn: Callable[[dict], None]) -> None:
-        """Call ``fn(interval)`` for every new interval (from the worker thread: keep it quick)."""
+    def add_listener(self, fn: Callable[[str, dict], None]) -> None:
+        """Call ``fn(event, data)`` for every event: ``("cycle", interval)`` for each new interval,
+        ``("control", control_state)`` when the operator control changes. Called from the
+        worker or an HTTP thread: keep it quick."""
         with self._cond:
             self._listeners.add(fn)
 
-    def remove_listener(self, fn: Callable[[dict], None]) -> None:
+    def remove_listener(self, fn: Callable[[str, dict], None]) -> None:
         with self._cond:
             self._listeners.discard(fn)
 
@@ -198,7 +236,9 @@ class Backend:
         """Every new interval as it is decided; None every ``heartbeat_s`` with nothing new."""
         q: queue.Queue = queue.Queue(maxsize=200)
 
-        def put(interval: dict) -> None:
+        def put(event: str, interval: dict) -> None:
+            if event != "cycle":
+                return
             try:
                 q.put_nowait(interval)
             except queue.Full:                      # a stalled reader must not block the site
@@ -225,6 +265,7 @@ class Backend:
         with self._cond:
             self._stopped = True
             self._cond.notify_all()
+        self.control.release()
         self._thread.join(timeout=2)
 
     # ------------------------------------------------------------------ worker
@@ -277,20 +318,25 @@ class Backend:
                 runner.ledger.finalize()
                 self._speed = 0.0
             self._publish()
-            listeners = list(self._listeners)
             self._cond.notify_all()
+        self._emit("cycle", interval)
+        return interval
+
+    def _emit(self, event: str, data: dict) -> None:
+        with self._cond:
+            listeners = list(self._listeners)
         for fn in listeners:
             try:
-                fn(interval)
+                fn(event, data)
             except Exception:                       # a broken listener must not stop the site
                 pass
-        return interval
 
     def _new_day(self) -> None:
         self._day = self.day_factory()
+        self.control.new_day()
         self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self.start_soc_mwh,
                                  battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path,
-                                 max_import_mw=self.max_import_mw)
+                                 max_import_mw=self.max_import_mw, control=self.control)
         self._publish()
         self._deadline = None
 

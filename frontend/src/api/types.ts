@@ -4,7 +4,8 @@
  * Times are local "HH:MM" strings on 15-minute steps.
  */
 
-export type DecisionSource = "llm" | "fallback";
+/** Who produced the setpoint the guard checked: the AI, the backup rules, or a person (override, hold, rejection). */
+export type DecisionSource = "llm" | "fallback" | "operator";
 export type Confidence = "low" | "medium" | "high";
 
 export interface Decision {
@@ -14,7 +15,7 @@ export interface Decision {
   confidence: Confidence;
   reasoning: string;
   explanation_for_operator: string;
-  /** Set when source = "fallback": timeout, llm_error, bad_json, ... */
+  /** Set when source = "fallback": timeout, llm_error, bad_json, approval_timeout, ... */
   fallback_reason: string | null;
 }
 
@@ -62,6 +63,28 @@ export interface Interval {
   decision: Decision;
   guard: GuardResult;
   settlement: Settlement;
+  control: IntervalControl;
+}
+
+/**
+ * What happened to the battery command in this interval (loop/day.py):
+ * auto      the AI's decision ran without asking
+ * approved  it waited and the operator approved it
+ * rejected  the operator rejected it: the battery held
+ * timeout   nobody answered in time: the battery held
+ * override  the operator's setpoint ran (still checked by the safety layer)
+ * hold      emergency hold: battery idle, nothing exported
+ */
+export type ControlAction = "auto" | "approved" | "rejected" | "timeout" | "override" | "hold";
+
+/** autonomous: the AI acts; supervised: big or unsure moves wait for a click; advisory: every move waits. */
+export type AutonomyMode = "autonomous" | "supervised" | "advisory";
+
+export interface IntervalControl {
+  action: ControlAction;
+  mode: AutonomyMode;
+  /** The AI's proposed setpoint when it had to wait for the operator, else null. */
+  proposed_mw: number | null;
 }
 
 /**
@@ -104,6 +127,47 @@ export interface StateSnapshot {
   /** Latest decided interval, null before the first cycle of the day. */
   current: Interval | null;
   sim: SimStatus;
+}
+
+/** POST /api/override. Runs from the next interval up to, not including, `until`. */
+export interface OperatorOverride {
+  /** > 0 charge, < 0 discharge. */
+  setpoint_mw: number;
+  /** "HH:MM" on a 15-minute step, or "24:00" for the end of the day. */
+  until: string;
+}
+
+/** PUT /api/autonomy (send only the fields to change). */
+export interface Autonomy {
+  mode: AutonomyMode;
+  /** supervised: moves above this many MW wait for the operator. */
+  max_auto_mw: number;
+  /** supervised: low-confidence moves (including backup-rule ones) wait too. */
+  ask_on_low_confidence: boolean;
+  /** How long a proposal waits before the battery holds instead. */
+  timeout_s: number;
+}
+
+/** An AI decision waiting for the operator. Answer with POST /api/approvals/{id} {approve}. */
+export interface PendingApproval {
+  id: number;
+  /** The interval it is for. */
+  time: string;
+  setpoint_mw: number;
+  source: DecisionSource;
+  confidence: Confidence;
+  explanation_for_operator: string;
+  /** Seconds left when this was sent. */
+  expires_in_s: number;
+}
+
+/** GET /api/control, every control command's response, and the SSE "control" event. */
+export interface ControlState {
+  /** Emergency hold: battery idle and nothing exported until released. */
+  hold: boolean;
+  override: OperatorOverride | null;
+  autonomy: Autonomy;
+  pending: PendingApproval | null;
 }
 
 /** missed = reserve not stored by its deadline; violated = reserve discharged below / sold below the minimum. */
@@ -152,6 +216,8 @@ export interface Metrics {
   decisions_total: number;
   decisions_llm: number;
   decisions_fallback: number;
+  /** Intervals where a person set the battery: override, emergency hold or a rejected proposal. */
+  decisions_operator: number;
   decisions_clipped: number;
   goals_met: number;
   goals_total: number;

@@ -1,6 +1,6 @@
 import type { Goal, Interval } from "@/api/types";
 import { USE_MOCKS } from "@/api/client";
-import { actionKind, confidenceLabel, fallbackReasonText, fmtMw, fmtMwh, fmtPrice } from "@/lib/labels";
+import { actionKind, confidenceLabel, controlText, fallbackReasonText, fmtMw, fmtMwh, fmtPrice } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -26,6 +26,9 @@ function Row({ k, v, tone }: { k: string; v: string; tone?: string }) {
  */
 export function AiPanel({ iv, socBefore, goals, maxPowerMw }: Props) {
   const llm = iv.decision.source === "llm";
+  const ctrl = controlText(iv.control);
+  // The operator decided, or the battery held because nobody answered the AI in time.
+  const byOperator = iv.decision.source === "operator" || iv.control.action === "timeout";
   const proposed = iv.decision.battery_fraction * maxPowerMw;
   const kind = actionKind(proposed);
   const activeGoals = goals.filter((g) => g.type !== "max_profit");
@@ -49,7 +52,12 @@ export function AiPanel({ iv, socBefore, goals, maxPowerMw }: Props) {
 
       <div>
         <h3 className="label mb-3">{llm ? "What it answered" : "What happened"}</h3>
-        {llm ? (
+        {byOperator ? (
+          <>
+            <p className="font-serif text-2xl leading-snug">{iv.decision.explanation_for_operator}</p>
+            {ctrl && <p className="mt-4 text-base text-ink-2">{ctrl}. The safety layer still checked the result.</p>}
+          </>
+        ) : llm ? (
           <>
             <blockquote className="font-serif text-2xl leading-snug">
               “{iv.decision.reasoning || iv.decision.explanation_for_operator}”
@@ -60,6 +68,7 @@ export function AiPanel({ iv, socBefore, goals, maxPowerMw }: Props) {
                 {kind === "hold" ? "hold" : `${kind} ${fmtMw(Math.abs(proposed))}`}
               </span>
               {iv.decision.curtail ? " and switch off surplus output" : ""}, with {confidenceLabel[iv.decision.confidence].toLowerCase()}.
+              {ctrl && <> {ctrl}.</>}
             </p>
           </>
         ) : (

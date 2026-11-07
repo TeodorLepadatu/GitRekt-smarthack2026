@@ -1,4 +1,4 @@
-import type { AddGoalResponse, DayResponse, Goal, Interval, Metrics, StateSnapshot } from "./types";
+import type { AddGoalResponse, Autonomy, ControlState, DayResponse, Goal, Interval, Metrics, StateSnapshot } from "./types";
 
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === "true";
 
@@ -56,23 +56,44 @@ export const api = {
   metrics: () => request<Metrics>("GET", "/api/metrics"),
   simRun: (speed: number) => request<unknown>("POST", "/api/sim/run", { speed }),
   simReset: () => request<unknown>("POST", "/api/sim/reset"),
+
+  control: () => request<ControlState>("GET", "/api/control"),
+  setOverride: (body: { setpoint_mw: number; until: string }) => request<ControlState>("POST", "/api/override", body),
+  clearOverride: () => request<ControlState>("DELETE", "/api/override"),
+  setHold: () => request<ControlState>("POST", "/api/hold"),
+  releaseHold: () => request<ControlState>("DELETE", "/api/hold"),
+  setAutonomy: (body: Partial<Autonomy>) => request<ControlState>("PUT", "/api/autonomy", body),
+  answerApproval: ({ id, approve }: { id: number; approve: boolean }) =>
+    request<ControlState>("POST", `/api/approvals/${id}`, { approve }),
 };
 
 export type StreamStatus = "connecting" | "live" | "down";
 
+export interface StreamHandlers {
+  /** A new interval was decided ("cycle" event). */
+  onCycle: (iv: Interval) => void;
+  /** The operator control changed: an override, the hold, autonomy or a pending approval ("control" event). */
+  onControl: (c: ControlState) => void;
+  onStatus: (s: StreamStatus) => void;
+}
+
 /**
- * Subscribe to the "cycle" SSE stream. Returns an unsubscribe function.
+ * Subscribe to the SSE stream. Returns an unsubscribe function.
  * EventSource reconnects by itself; onStatus reports the connection state.
  */
-export function subscribeCycles(onCycle: (iv: Interval) => void, onStatus: (s: StreamStatus) => void): () => void {
+export function subscribeStream({ onCycle, onControl, onStatus }: StreamHandlers): () => void {
   if (USE_MOCKS) {
     let unsub: (() => void) | null = null;
     let cancelled = false;
     import("@/mocks/server").then(({ mockBackend }) => {
       if (cancelled) return;
       onStatus("live");
-      const off = mockBackend.subscribe((iv) => onCycle(structuredClone(iv)));
-      unsub = () => void off();
+      const offCycle = mockBackend.subscribe((iv) => onCycle(structuredClone(iv)));
+      const offControl = mockBackend.subscribeControl((c) => onControl(structuredClone(c)));
+      unsub = () => {
+        offCycle();
+        offControl();
+      };
     });
     return () => {
       cancelled = true;
@@ -83,12 +104,15 @@ export function subscribeCycles(onCycle: (iv: Interval) => void, onStatus: (s: S
   const es = new EventSource("/api/stream");
   es.onopen = () => onStatus("live");
   es.onerror = () => onStatus(es.readyState === EventSource.CLOSED ? "down" : "connecting");
-  es.addEventListener("cycle", (ev) => {
-    try {
-      onCycle(JSON.parse((ev as MessageEvent).data) as Interval);
-    } catch {
-      /* ignore malformed event */
-    }
-  });
+  const on = <T,>(event: string, fn: (data: T) => void) =>
+    es.addEventListener(event, (ev) => {
+      try {
+        fn(JSON.parse((ev as MessageEvent).data) as T);
+      } catch {
+        /* ignore malformed event */
+      }
+    });
+  on("cycle", onCycle);
+  on("control", onControl);
   return () => es.close();
 }
