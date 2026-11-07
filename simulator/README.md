@@ -19,8 +19,7 @@ from config import Settings
 sim = SiteSimulator(Settings().battery, stored_mwh=3.5)
 
 cycle = run_cycle(features, goal_config)                  # pipeline: prompt → LLM → validator → guard
-r = sim.step(cycle.setpoint, demand_mw=4.6, production_mw=5.0,
-             time="15:00", forecast=features)
+r = sim.step(cycle.setpoint, demand_mw=4.6, production_mw=5.0, time="15:00")
 
 r.stored_after_mwh      # 3.71
 r.grid_import_mwh       # 0.1175
@@ -57,7 +56,6 @@ All battery formulas come from `battery.BatteryConfig`, the same ones the guard 
 | `grid_import_mwh`, `grid_export_mwh` | bought / sold |
 | `battery_throughput_mwh` | energy through the battery (settlement: wear = €2.5 × this) |
 | `losses_mwh` | energy lost to efficiency |
-| `demand_error_mw`, `production_error_mw` | actual − forecast, if `forecast` is given (ML retraining data) |
 | `warnings` | clipping, reduced curtailment, invalid command |
 
 ## Inputs that are wrong
@@ -65,15 +63,30 @@ All battery formulas come from `battery.BatteryConfig`, the same ones the guard 
 | Problem | Result |
 |---|---|
 | Missing or invalid setpoint / curtail, or a negative curtail | treated as 0, with a warning, like an inverter ignoring a bad command |
-| `time` not `"HH:MM"`, or `forecast` not a dict | ignored, with a warning |
+| `time` not `"HH:MM"` | ignored, with a warning |
 | Negative or non-numeric demand / production | `SimulatorError` |
 | Starting energy outside 0 – capacity | `SimulatorError` |
 
 A step that raises changes nothing: the stored energy and the history stay as they were.
 
+## With settlement
+
+This is the **only** place the physics runs. Settlement (`settlement/`) adds the money and the
+forecast errors on top of a `StepResult`:
+
+```python
+from settlement import DayLedger, settle
+
+s = settle(r, price_eur_mwh=95)              # one interval: profit -11.71, wear -0.54
+ledger.record(cycle, features, r)            # the day's books, from the same step
+```
+
+`settlement.settle_interval(...)` keeps its old signature and runs the simulator internally, so
+both always give the same numbers.
+
 ## Not here
 
-- **Money** (prices, profit, wear cost): settlement reads `StepResult`.
+- **Money and forecast errors:** `settlement/`.
 - **The 15-minute loop** over a whole day: the clock calls `step()` once per interval.
 
 ## Tests

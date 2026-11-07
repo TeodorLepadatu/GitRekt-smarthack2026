@@ -118,13 +118,6 @@ def test_bad_starting_state_raises(stored):
         SiteSimulator(B, stored)
 
 
-def test_forecast_errors_are_recorded():
-    r = SiteSimulator(B, 5.0).step(cmd(0), 4.9, 4.4, forecast={"demand_mw": 4.6, "production_mw": 5.0})
-    assert r.demand_error_mw == pytest.approx(0.3)
-    assert r.production_error_mw == pytest.approx(-0.6)
-    assert SiteSimulator(B, 5.0).step(cmd(0), 1, 1).demand_error_mw is None
-
-
 def test_sensors_history_and_reset():
     sim = SiteSimulator(B)               # starts at the minimum
     assert sim.sensors() == {"stored_mwh": B.e_min_mwh}
@@ -157,7 +150,7 @@ def test_full_cycles_feed_the_new_state_back():
                         max_charge_mw=B.max_charge_mw(sim.stored_mwh),
                         max_discharge_mw=B.max_discharge_mw(sim.stored_mwh))
         cycle = run_cycle(features, goals, llm_call=lambda prompt: json.dumps(RESERVE["decision"]), battery=B)
-        sim.step(cycle.setpoint, features["demand_mw"], features["production_mw"], time=t, forecast=features)
+        sim.step(cycle.setpoint, features["demand_mw"], features["production_mw"], time=t)
     assert [r.time for r in sim.history] == ["15:00", "15:15", "15:30", "15:45"]
     assert sim.stored_mwh > 3.5 + 4 * 0.8 * DT                    # charged every interval
     for prev, cur in zip(sim.history, sim.history[1:]):
@@ -193,11 +186,10 @@ def test_failed_step_changes_nothing():
     assert sim.stored_mwh == 5.0 and sim.history == []
 
 
-def test_bad_time_and_forecast_are_ignored_with_a_warning():
-    r = SiteSimulator(B, 5.0).step(cmd(0.0), 1.0, 1.0, time=1500, forecast=[1, 2])
+def test_bad_time_is_ignored_with_a_warning():
+    r = SiteSimulator(B, 5.0).step(cmd(0.0), 1.0, 1.0, time=1500)
     assert r.time is None
-    assert r.demand_error_mw is None
-    assert len(r.warnings) == 2
+    assert len(r.warnings) == 1
     assert SiteSimulator(B, 5.0).step(cmd(0.0), 1.0, 1.0, time="24:00").time is None
 
 

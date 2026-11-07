@@ -21,8 +21,8 @@ Physics (all from battery.BatteryConfig, the same formulas the guard uses):
   exported. If the actual surplus turns out smaller than forecast, less is
   curtailed, so curtailing never causes an import or throws away battery energy.
 
-No money here: prices, profit and wear cost belong to settlement, which reads
-the StepResult.
+This is the only place that runs the physics. Settlement (settlement/) reads the
+StepResult and adds the money (prices, profit, wear) and the forecast errors.
 """
 from __future__ import annotations
 
@@ -62,8 +62,6 @@ class StepResult:
     grid_export_mwh: float
     battery_throughput_mwh: float  # energy through the battery terminals (for wear)
     losses_mwh: float              # energy lost to charge/discharge efficiency
-    demand_error_mw: Optional[float] = None      # actual - forecast (data for ML retraining)
-    production_error_mw: Optional[float] = None
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -104,15 +102,13 @@ class SiteSimulator:
         production_mw: float,
         *,
         time: Optional[str] = None,
-        forecast: Optional[Mapping[str, Any]] = None,
     ) -> StepResult:
         """Run one interval.
 
         ``command``: the guard's output (``GuardResult`` or its dict) with
         ``battery_setpoint_mw`` and ``curtail_mw``.
         ``demand_mw`` / ``production_mw``: the interval's actual values.
-        ``forecast``: optional features used for the decision; if it has
-        ``demand_mw`` / ``production_mw`` the forecast errors are recorded.
+        Forecast errors are not physics: settlement records them.
         """
         b, dt = self.battery, self.battery.interval_h
         demand = _measurement(demand_mw, "demand_mw")
@@ -121,9 +117,6 @@ class SiteSimulator:
         if time is not None and not (isinstance(time, str) and _HHMM_RE.match(time)):
             warnings.append(f"time must be 'HH:MM', got {time!r}; not recorded")
             time = None
-        if forecast is not None and not isinstance(forecast, Mapping):
-            warnings.append(f"forecast must be a mapping, got {type(forecast).__name__}; ignored")
-            forecast = None
 
         requested = _command_value(command, "battery_setpoint_mw", warnings)
         curtail_requested = _command_value(command, "curtail_mw", warnings)
@@ -167,8 +160,6 @@ class SiteSimulator:
             grid_export_mwh=max(0.0, grid_mw) * dt,
             battery_throughput_mwh=throughput,
             losses_mwh=abs(throughput - abs(after - before)),
-            demand_error_mw=_error(demand, forecast, "demand_mw"),
-            production_error_mw=_error(production, forecast, "production_mw"),
             warnings=warnings,
         )
         self._stored = after
@@ -213,10 +204,3 @@ def _command_value(command: Any, key: str, warnings: list[str]) -> float:
         warnings.append(f"{key} missing or invalid ({raw!r}); using 0")
         return 0.0
     return v
-
-
-def _error(actual: float, forecast: Optional[Mapping[str, Any]], key: str) -> Optional[float]:
-    if not forecast:
-        return None
-    f = finite_float(forecast.get(key))
-    return None if f is None else actual - f
