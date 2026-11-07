@@ -17,6 +17,7 @@
 from .builder import (
     FeatureBuilderError,
     SiteForecast,
+    break_even_at,
     build_features,
 )
 from .goals import even_pace_fraction, goals_progress, latest_start_minutes, reserve_progress
@@ -26,6 +27,7 @@ __all__ = [
     "build_features",
     "SiteForecast",
     "FeatureBuilderError",
+    "break_even_at",
     "PriceCurve",
     "PriceCurveError",
     "hhmm",

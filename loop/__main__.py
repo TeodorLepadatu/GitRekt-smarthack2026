@@ -1,6 +1,7 @@
 """Run a day through the whole cycle from the command line.
 
     python -m loop                                   # demo day, rule-based fallback only (instant)
+    python -m loop --date 2026-06-15                 # a real day: ML forecasts + ENTSO-E prices
     python -m loop --llm                             # demo day with the decision LLM (Ollama)
     python -m loop --llm --model qwen3:4b --goals "Store 6 MWh by 18:00"
     python -m loop --speed 600                       # live: one interval every 1.5 s
@@ -19,6 +20,7 @@ from goal_parser import parse_goals
 
 from .day import DayRunner
 from .demo import demo_day
+from .real_day import RealDayError, SiteScale, real_day
 
 
 def _llm_off(prompt: str) -> str:
@@ -36,6 +38,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--speed", type=float, default=0.0,
                     help="real-time factor: 1 = real time, 600 = 1.5 s per interval; 0 = as fast as possible")
     ap.add_argument("--seed", type=int, default=7, help="demo day seed")
+    ap.add_argument("--date", help="run a real day (YYYY-MM-DD): ML forecasts + ENTSO-E day-ahead prices")
+    ap.add_argument("--plan", action="store_true",
+                    help="with --date: settle on the forecasts instead of the measured actuals")
     ap.add_argument("--out", help="write every interval record to this JSONL file")
     ap.add_argument("--quiet", action="store_true", help="print only the summary")
     args = ap.parse_args(argv)
@@ -56,8 +61,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"goal not understood: {c.question}", file=sys.stderr)
         goals = result.config
 
+    if args.date:
+        try:
+            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan)
+        except RealDayError as exc:
+            print(f"cannot build {args.date}: {exc}", file=sys.stderr)
+            return 2
+    else:
+        day = demo_day(seed=args.seed)
+
     on_interval = None if args.quiet else (lambda rec: print(rec["dashboard_line"], flush=True))
-    runner = DayRunner(demo_day(seed=args.seed), goals, start_soc_mwh=args.start_soc, start_time=args.start,
+    runner = DayRunner(day, goals, start_soc_mwh=args.start_soc, start_time=args.start,
                        battery=settings.battery, llm_call=llm_call, on_interval=on_interval, log_path=args.out)
     if args.speed > 0:
         runner.run_realtime(args.speed, until=args.until)
@@ -73,6 +87,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"bought {m['energy_bought_mwh']:.2f} MWh, sold {m['energy_sold_mwh']:.2f} MWh, "
           f"curtailed {m['curtailed_mwh']:.2f} MWh, battery throughput {m['battery_throughput_mwh']:.2f} MWh")
     print(f"decisions: {m['decisions_llm']} LLM, {m['decisions_fallback']} fallback, {m['decisions_clipped']} clipped by the guard")
+    if m["demand_mae_mw"] is not None:
+        print(f"forecast error: demand {m['demand_mae_mw']:.3f} MW MAE, production {m['production_mae_mw']:.3f} MW MAE, "
+              f"production inside its 10-90 % band {m['production_range_coverage']:.0%} of the time")
     if s["final_goal_status"] is not None:
         print("goals:", json.dumps(s["final_goal_status"]))
     return 0
