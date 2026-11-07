@@ -1,11 +1,10 @@
 """Settlement of one 15-minute interval: the cashier (plan sections 2 and 5).
 
-The site runs the guard's setpoint for one interval; the grid trade is whatever
-is left over (actual net - battery - curtailment). Settlement always uses the
-ACTUAL demand and production, so forecast errors show up in the money instead
-of hiding.
+The physics (what the battery did, what was curtailed, what went to the grid)
+comes from the site simulator (simulator/), the one place it is computed.
+Settlement adds the money, always on the ACTUAL demand and production, so
+forecast errors show up in the money instead of hiding:
 
-    grid_mw   = (production - curtailed) - demand - battery     (> 0 export, < 0 import)
     energy    = export_mwh x price - import_mwh x price
     wear      = - wear_eur_per_mwh x |battery| x dt
     profit    = energy + wear
@@ -13,6 +12,10 @@ of hiding.
 Plan section 5 check (15:00, price 95, surplus 0.4 MW, battery +0.87 MW):
     import 0.47 MW x 0.25 h = 0.1175 MWh -> energy -11.16, wear -0.54, profit -11.71,
     SoC 3.5 -> 3.71 MWh.
+
+Two ways in:
+    settle(step, price)          the site simulator already ran the interval (the normal loop)
+    settle_interval(...)         run the simulator for one interval here, then settle
 
 Sign convention: battery > 0 = CHARGE, < 0 = DISCHARGE (same as the guard).
 Costs are negative numbers, income positive.
@@ -24,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from battery import BatteryConfig
+from simulator import SiteSimulator, StepResult
 
 EPS = 1e-9
 
@@ -52,6 +56,40 @@ class IntervalSettlement:
         return asdict(self)
 
 
+def settle(
+    step: StepResult,
+    price_eur_mwh: float,
+    *,
+    time: Optional[str] = None,
+    cfg: BatteryConfig = BatteryConfig(),
+) -> IntervalSettlement:
+    """The money for one interval the site simulator has already run."""
+    energy = (step.grid_export_mwh - step.grid_import_mwh) * price_eur_mwh
+    wear = -cfg.wear_eur_per_mwh * step.battery_throughput_mwh
+    profit = energy + wear
+    no_battery = (step.production_mw - step.demand_mw) * cfg.interval_h * price_eur_mwh
+
+    return IntervalSettlement(
+        time=time or step.time or "??:??",
+        price_eur_mwh=price_eur_mwh,
+        soc_before_mwh=round(step.stored_before_mwh, 4),
+        soc_after_mwh=round(step.stored_after_mwh, 4),
+        battery_mw=round(step.setpoint_applied_mw, 4),
+        curtail_mw=round(step.curtailed_mw, 4),
+        demand_mw=step.demand_mw,
+        production_mw=step.production_mw,
+        grid_import_mwh=round(step.grid_import_mwh, 4),
+        grid_export_mwh=round(step.grid_export_mwh, 4),
+        energy_cost_eur=round(energy, 2),
+        wear_eur=round(wear, 2),
+        profit_eur=round(profit, 2),
+        no_battery_profit_eur=round(no_battery, 2),
+        value_added_eur=round(profit - no_battery, 2),
+        site_clipped=step.clipped,
+        warnings=list(step.warnings),
+    )
+
+
 def settle_interval(
     *,
     time: str,
@@ -63,52 +101,16 @@ def settle_interval(
     production_mw: float,
     cfg: BatteryConfig = BatteryConfig(),
 ) -> IntervalSettlement:
-    """Run the setpoint for one interval and settle it with the grid."""
-    dt = cfg.interval_h
-    warnings: list[str] = []
+    """Run the setpoint for one interval on the site simulator, then settle it.
 
-    # The battery can only do what the actual SoC allows (the guard used the
-    # sensor SoC too, so this only bites if the two disagree).
-    hi = cfg.max_charge_mw(soc_before_mwh)
-    lo = -cfg.max_discharge_mw(soc_before_mwh)
-    battery = min(hi, max(lo, battery_setpoint_mw))
-    site_clipped = abs(battery - battery_setpoint_mw) > 1e-6
-    if site_clipped:
-        warnings.append(f"setpoint {battery_setpoint_mw:.4f} MW cut to {battery:.4f} MW by the actual SoC")
-
-    production = max(0.0, production_mw)
-    curtail = min(max(0.0, curtail_mw), production)
-    if curtail_mw > production + EPS:
-        warnings.append(f"curtail {curtail_mw:.4f} MW cut to the actual production {production:.4f} MW")
-
-    grid_mw = (production - curtail) - demand_mw - battery
-    export_mwh = max(0.0, grid_mw) * dt
-    import_mwh = max(0.0, -grid_mw) * dt
-
-    energy = (export_mwh - import_mwh) * price_eur_mwh
-    wear = -cfg.wear_eur_per_mwh * abs(battery) * dt
-    profit = energy + wear
-    no_battery = (production - demand_mw) * dt * price_eur_mwh
-
-    return IntervalSettlement(
-        time=time,
-        price_eur_mwh=price_eur_mwh,
-        soc_before_mwh=round(soc_before_mwh, 4),
-        soc_after_mwh=round(cfg.energy_after(soc_before_mwh, battery), 4),
-        battery_mw=round(battery, 4),
-        curtail_mw=round(curtail, 4),
-        demand_mw=demand_mw,
-        production_mw=production,
-        grid_import_mwh=round(import_mwh, 4),
-        grid_export_mwh=round(export_mwh, 4),
-        energy_cost_eur=round(energy, 2),
-        wear_eur=round(wear, 2),
-        profit_eur=round(profit, 2),
-        no_battery_profit_eur=round(no_battery, 2),
-        value_added_eur=round(profit - no_battery, 2),
-        site_clipped=site_clipped,
-        warnings=warnings,
+    Raises simulator.SimulatorError for impossible inputs (negative demand or
+    production, a state of charge outside the battery).
+    """
+    step = SiteSimulator(cfg, soc_before_mwh).step(
+        {"battery_setpoint_mw": battery_setpoint_mw, "curtail_mw": curtail_mw},
+        demand_mw, production_mw,
     )
+    return settle(step, price_eur_mwh, time=time, cfg=cfg)
 
 
 def forecast_errors(forecast: dict, demand_mw: float, production_mw: float) -> dict[str, Optional[float]]:
