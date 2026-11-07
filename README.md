@@ -7,6 +7,7 @@ Smarthack 2026
 user goals ─► goal_parser (GoalStore) ─► GoalConfig        (only when the goals change)
 
 every 15 min:
+forecasts + prices + SoC + GoalConfig ─► feature_builder ─► features
 features + GoalConfig ─► prompt_assembly ─► llm.DecisionAgent ─► validator (+ fallback) ─► guard ─► setpoints
 ```
 
@@ -15,6 +16,7 @@ features + GoalConfig ─► prompt_assembly ─► llm.DecisionAgent ─► val
 | Module | Role |
 |---|---|
 | `goal_parser/` | Plain-language goals → `GoalConfig`; `GoalStore` keeps the active config |
+| `feature_builder/` | All the arithmetic: section 8 of the prompt and goal progress |
 | `prompt_assembly/` | Rules, solved examples, current situation and USER GOALS → one prompt |
 | `llm/` | The shared Ollama client and the decision agent |
 | `validator/` | Parses and checks the LLM output; rule-based fallback on any failure |
