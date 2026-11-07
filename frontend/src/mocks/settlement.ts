@@ -3,7 +3,8 @@
  * settlement/goals.py) and of the site simulator's grid rule (simulator/site.py),
  * so the mock dashboard shows the same money and goal statuses the real backend will.
  *
- *   curtailed = min(requested, production, what would otherwise be exported)
+ *   curtailed = export limiter: if curtailment is asked for, all production that
+ *               would otherwise be exported (sized on the actual surplus), else 0
  *   grid    = (production - curtailed) - demand - battery   (> 0 export, < 0 import)
  *   energy  = (export - import) x price
  *   wear    = - 2.5 EUR x |battery| x 0.25 h
@@ -32,8 +33,8 @@ const inWindow = (now: number, start: number, end: number) =>
 
 export function settle(price: number, demand: number, production: number, batteryMw: number, curtailMw: number): Settlement {
   const prod = Math.max(0, production);
-  // Same rule as simulator/site.py: curtail only production that would otherwise be exported.
-  const curtail = Math.min(Math.max(0, curtailMw), prod, Math.max(0, prod - demand - batteryMw));
+  // Same rule as simulator/site.py: curtailment is an export limiter on production.
+  const curtail = curtailMw > 0.001 ? Math.min(prod, Math.max(0, prod - demand - batteryMw)) : 0;
   const grid = prod - curtail - demand - batteryMw;
   const exp = Math.max(0, grid) * INTERVAL_H;
   const imp = Math.max(0, -grid) * INTERVAL_H;
