@@ -227,10 +227,15 @@ def combine(parts_dir: Path, output: Path) -> tuple[int, int]:
 # --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
-def run(name: str, use_case: str, tz: str, area: str = ROMANIA, years_back: int = 4) -> int:
-    """CLI entry point: fetch `use_case` for the date range and write one CSV."""
+def run(name: str, use_case: str, tz: str, area: str = ROMANIA, years_back: int = 4,
+        default_start: date | None = None, postprocess=None) -> int:
+    """CLI entry point: fetch `use_case` for the date range and write one CSV.
+
+    `default_start` overrides the `years_back` default; `postprocess(path)` is
+    called on the combined CSV (e.g. to convert MTU to Unix time).
+    """
     today = date.today()
-    default_start = today.replace(year=today.year - years_back)
+    default_start = default_start or today.replace(year=today.year - years_back)
     p = argparse.ArgumentParser(description=f"Download ENTSO-E '{use_case}' for {area} into one CSV.")
     p.add_argument("--start", type=date.fromisoformat, default=default_start,
                    help=f"first day, inclusive (default: {default_start})")
@@ -283,5 +288,7 @@ def run(name: str, use_case: str, tz: str, area: str = ROMANIA, years_back: int 
 
     n_files, n_rows = combine(parts, out)
     shutil.rmtree(parts)
+    if postprocess:
+        postprocess(out)
     print(f"\nDone: {n_rows} rows from {n_files} windows -> {out}")
     return 0
