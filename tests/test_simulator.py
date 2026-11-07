@@ -43,7 +43,13 @@ def test_energy_always_balances(stored, setpoint, demand, production, curtail):
     assert B.e_min_mwh - 1e-9 <= r.stored_after_mwh <= B.e_max + 1e-9
     assert abs(r.setpoint_applied_mw) <= B.p_max_mw + 1e-9
     assert r.grid_import_mwh == 0 or r.grid_export_mwh == 0
-    assert 0 <= r.curtailed_mw <= min(curtail, production)   # only production is ever curtailed
+    assert 0 <= r.curtailed_mw <= production                  # only production is ever curtailed
+    if curtail > 0:
+        # export limiter: no production is sold; only battery energy beyond the demand can be
+        battery_beyond_demand = max(0.0, -r.setpoint_applied_mw - demand) * DT
+        assert r.grid_export_mwh == pytest.approx(battery_beyond_demand, abs=1e-9)
+    else:
+        assert r.curtailed_mw == 0.0
     assert r.stored_after_mwh == pytest.approx(B.energy_after(stored, r.setpoint_applied_mw))
 
 
@@ -156,6 +162,13 @@ def test_full_cycles_feed_the_new_state_back():
     for prev, cur in zip(sim.history, sim.history[1:]):
         assert cur.stored_before_mwh == prev.stored_after_mwh   # state carried over
     assert all(math.isfinite(r.grid_import_mwh) for r in sim.history)
+
+
+def test_curtailment_is_sized_on_the_actual_surplus():
+    # the demo day at 12:00: the guard curtails 4.75 MW for a 6.56 MW forecast, actual production is 7.38 MW
+    r = SiteSimulator(B, 10.0).step(cmd(0.0, curtail=4.75), demand_mw=1.8, production_mw=7.38)
+    assert r.curtailed_mw == pytest.approx(7.38 - 1.8)
+    assert r.grid_export_mwh == 0.0 and r.warnings == []        # nothing sold at a negative price
 
 
 def test_never_curtails_more_than_was_produced():

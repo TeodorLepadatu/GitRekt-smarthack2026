@@ -27,6 +27,7 @@ pytest -q
 | `test_decision.py` | `DecisionAgent` sends the prompt with the schema; Ollama errors reach the validator as `llm_error` |
 | `test_simulator.py` | Site simulator: battery limits, grid trade, curtailment, energy balance, full cycles |
 | `test_simulator_settlement.py` | Settlement uses exactly the simulator's physics; ledger and simulator stay in step over a day loop |
+| `test_loop.py` | The clock: a whole day through feature builder → pipeline → simulator → settlement, failures, real-time pacing, CLI |
 
 ### `test_pipeline.py`
 
