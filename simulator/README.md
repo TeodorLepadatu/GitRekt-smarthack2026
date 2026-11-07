@@ -41,9 +41,10 @@ All battery formulas come from `battery.BatteryConfig`, the same ones the guard 
   are the guard's 4-decimal rounding and are not reported.
 - **Grid** (automatic): `production − curtailed − demand − battery`. Positive is export,
   negative is import.
-- **Curtailment** only removes production, and only what would otherwise be exported. If actual
-  production is lower than forecast, less is curtailed, so curtailing never causes an import or
-  throws away battery energy.
+- **Curtailment** is an export limiter, as on real sites. The guard only asks for it when exporting
+  would be wrong (negative price, or a "never sell below" goal), so when it does, all production that
+  would otherwise be exported is switched off, sized on the **actual** surplus, not the forecast. It
+  never causes an import and never throws away battery energy.
 
 ## Output: `StepResult`
 
@@ -96,6 +97,6 @@ python -m pytest tests/test_simulator.py
 ```
 
 They check the plan's example (3.5 MWh + 0.87 MW → 3.71 MWh, import 0.1175 MWh), that energy
-balances in 270 combinations, the battery limits, the 90 % round trip, curtailment (never more
-than was produced), bad inputs, and four full cycles through `pipeline.run_cycle` with the state
+balances in 270 combinations, the battery limits, the 90 % round trip, curtailment (sized on the
+actual surplus, never more than was produced), bad inputs, and four full cycles through `pipeline.run_cycle` with the state
 carried over.
