@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Clock, Trash2, TrendingUp, XCircle } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock, ShieldAlert, Trash2, TrendingUp, XCircle } from "lucide-react";
 import type { Goal, GoalStatus } from "@/api/types";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,25 @@ const statusVariant: Record<GoalStatus, BadgeVariant> = {
   behind: "warn",
   met: "info",
   unreachable: "bad",
+  missed: "bad",
+  violated: "bad",
 };
 const statusBar: Record<GoalStatus, string> = {
   on_track: "bg-ok",
   behind: "bg-warn",
   met: "bg-info",
   unreachable: "bg-bad",
+  missed: "bg-bad",
+  violated: "bg-bad",
 };
-const StatusIcon = { on_track: TrendingUp, behind: Clock, met: CheckCircle2, unreachable: XCircle };
+const StatusIcon = {
+  on_track: TrendingUp,
+  behind: Clock,
+  met: CheckCircle2,
+  unreachable: XCircle,
+  missed: XCircle,
+  violated: ShieldAlert,
+};
 
 interface Props {
   goal: Goal;
@@ -68,6 +79,12 @@ export function GoalItem({ goal, onDelete, deleting }: Props) {
       )}
       {goal.type === "min_sell_price" && goal.eur_per_mwh != null && (
         <span className="text-xs text-muted-foreground">No selling while the price is below €{goal.eur_per_mwh.toFixed(2)}/MWh.</span>
+      )}
+      {/* Reserves already show progress; their message adds only the outcome ("6 MWh reached at 12:45"). */}
+      {goal.message && (goal.type !== "reserve" || ["met", "missed", "violated"].includes(goal.status)) && (
+        <span className={goal.status === "missed" || goal.status === "violated" ? "text-xs text-bad" : "text-xs text-muted-foreground"}>
+          {goal.message}
+        </span>
       )}
       {goal.status === "unreachable" && (
         <span className="flex items-center gap-1 text-xs text-bad">

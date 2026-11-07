@@ -29,6 +29,8 @@ const statusFill: Record<string, string> = {
   behind: "var(--warn)",
   met: "var(--info)",
   unreachable: "var(--bad)",
+  missed: "var(--bad)",
+  violated: "var(--bad)",
 };
 
 function Legend({ items }: { items: { label: string; className: string; dashed?: boolean; area?: boolean }[] }) {

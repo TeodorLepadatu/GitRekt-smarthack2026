@@ -44,6 +44,9 @@ class Settings:
     )
 
     goals_path: str = field(default_factory=lambda: os.environ.get("ENERGY_AGENT_GOALS_PATH", "data/goals.json"))
+    settlement_log_path: str | None = field(
+        default_factory=lambda: os.environ.get("ENERGY_AGENT_SETTLEMENT_LOG", "logs/settlement.jsonl") or None
+    )
     llm_log_path: str | None = field(
         default_factory=lambda: os.environ.get("ENERGY_AGENT_LLM_LOG", "logs/llm_calls.jsonl") or None
     )
