@@ -1,4 +1,4 @@
-# GitRekt-
+# GitRekt
 Smarthack 2026
 
 ## Pipeline
@@ -16,6 +16,7 @@ features + GoalConfig ─► prompt_assembly ─► llm.DecisionAgent ─► val
 
 | Module | Role |
 |---|---|
+| `predictions/` | ML 1 + ML 2: demand and production forecasts (solar, wind, total) with 10–90 % ranges for any 15-min timestamp up to 7 days ahead; `DemandForecaster`, `ProductionForecaster` and an HTTP API (see `predictions/README.md`) |
 | `goal_parser/` | Plain-language goals → `GoalConfig`; `GoalStore` keeps the active config |
 | `feature_builder/` | All the arithmetic: section 8 of the prompt and goal progress |
 | `prompt_assembly/` | Rules, solved examples, current situation and USER GOALS → one prompt |
@@ -28,3 +29,19 @@ features + GoalConfig ─► prompt_assembly ─► llm.DecisionAgent ─► val
 | `common.py` | Small shared helpers |
 
 Run the tests with `pytest -q` (see `tests/README.md`).
+
+## Data visualization
+
+Create and activate the virtual environment, then install the dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Generate the parsed dataset and plots:
+
+```powershell
+python visualize_data.py
+```
