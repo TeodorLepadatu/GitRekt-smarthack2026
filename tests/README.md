@@ -12,8 +12,8 @@ From the repository root:
 pytest -q
 ```
 
-`pytest.ini` puts the repository root on `sys.path` and collects `tests/`, `guard/tests/` and
-`validator/tests/`, so this one command runs everything.
+`pytest.ini` puts the repository root on `sys.path` and collects `tests/`, `guard/tests/`,
+`validator/tests/` and `settlement/tests/`, so this one command runs everything.
 
 ## Files
 

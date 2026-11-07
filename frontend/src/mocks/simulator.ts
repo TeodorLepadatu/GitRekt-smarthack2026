@@ -5,6 +5,7 @@
  */
 import type { Confidence, Decision, ForecastInterval, Goal, GuardResult, Interval } from "@/api/types";
 import { indexToTime, INTERVAL_H, timeToIndex } from "@/lib/utils";
+import { settle } from "./settlement";
 
 export const CAPACITY = 10;
 export const P_MAX = 3;
@@ -15,7 +16,6 @@ const EPS = 1e-6;
 const CHEAP = 60;
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
-const r4 = (v: number) => Math.round(v * 10000) / 10000;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export const maxCharge = (soc: number) => Math.min(P_MAX, Math.max(0, CAPACITY - soc) / (ETA * INTERVAL_H));
@@ -286,19 +286,13 @@ export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goa
   };
   const guard = runGuard(decision, f, soc, goals, startMin);
   const sp = guard.battery_setpoint_mw;
-  const grid = f.demand_mw + sp - (f.production_mw - guard.curtail_mw);
-  const imp = Math.max(0, grid) * INTERVAL_H;
-  const exp = Math.max(0, -grid) * INTERVAL_H;
   return {
     ...f,
     time: indexToTime(i),
     soc_mwh: r2(clamp(socAfter(soc, sp), 0, CAPACITY)),
     decision,
     guard,
-    settlement: {
-      grid_import_mwh: r4(imp),
-      grid_export_mwh: r4(exp),
-      profit_eur: r2((exp - imp) * f.price_eur_mwh),
-    },
+    // Same math as settlement/settle.py (forecast = actual in the mock).
+    settlement: settle(f.price_eur_mwh, f.demand_mw, f.production_mw, sp, guard.curtail_mw),
   };
 }

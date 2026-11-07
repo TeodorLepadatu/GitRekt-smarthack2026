@@ -25,10 +25,20 @@ export interface GuardResult {
   applied_rules: string[];
 }
 
+/** Money for one interval, settled on actual values (settlement/settle.py). Costs < 0. */
 export interface Settlement {
   grid_import_mwh: number;
   grid_export_mwh: number;
+  /** export × price − import × price */
+  energy_cost_eur: number;
+  /** −€2.5 per MWh charged or discharged */
+  wear_eur: number;
+  /** energy_cost_eur + wear_eur */
   profit_eur: number;
+  /** Same interval without the battery or curtailment. */
+  no_battery_profit_eur: number;
+  /** profit_eur − no_battery_profit_eur: what the battery earned. */
+  value_added_eur: number;
 }
 
 /** One 15-minute interval. Also the payload of the SSE "cycle" event. */
@@ -89,7 +99,8 @@ export interface StateSnapshot {
   sim: SimStatus;
 }
 
-export type GoalStatus = "on_track" | "behind" | "met" | "unreachable";
+/** missed = reserve not stored by its deadline; violated = reserve discharged below / sold below the minimum. */
+export type GoalStatus = "on_track" | "behind" | "met" | "unreachable" | "missed" | "violated";
 export type GoalType = "reserve" | "min_sell_price" | "max_profit";
 
 export interface Goal {
@@ -105,6 +116,11 @@ export interface Goal {
   stored_mwh?: number;
   need_mwh?: number;
   hours_left?: number;
+  /** Reserve: first time the target was stored, e.g. "16:00". */
+  reached_at?: string | null;
+  violated_at?: string | null;
+  /** Settlement's one-line status, e.g. "6 MWh reached at 16:00". */
+  message?: string;
   // min_sell_price
   eur_per_mwh?: number;
 }
@@ -119,6 +135,10 @@ export interface AddGoalResponse {
 /** GET /api/metrics */
 export interface Metrics {
   profit_today_eur: number;
+  energy_cost_eur: number;
+  wear_eur: number;
+  no_battery_profit_eur: number;
+  value_added_eur: number;
   energy_sold_mwh: number;
   energy_bought_mwh: number;
   curtailed_mwh: number;

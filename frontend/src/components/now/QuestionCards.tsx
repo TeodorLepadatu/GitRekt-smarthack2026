@@ -42,14 +42,32 @@ const statusColor: Record<GoalStatus, string> = {
   behind: "text-warn",
   met: "text-info",
   unreachable: "text-bad",
+  missed: "text-bad",
+  violated: "text-bad",
 };
-const statusBar: Record<GoalStatus, string> = { on_track: "bg-ok", behind: "bg-warn", met: "bg-info", unreachable: "bg-bad" };
-const StatusIcon = { on_track: TrendingUp, behind: Clock, met: CheckCircle2, unreachable: XCircle };
+const statusBar: Record<GoalStatus, string> = {
+  on_track: "bg-ok",
+  behind: "bg-warn",
+  met: "bg-info",
+  unreachable: "bg-bad",
+  missed: "bg-bad",
+  violated: "bg-bad",
+};
+const StatusIcon = {
+  on_track: TrendingUp,
+  behind: Clock,
+  met: CheckCircle2,
+  unreachable: XCircle,
+  missed: XCircle,
+  violated: ShieldAlert,
+};
 
 function goalsHeadline(goals: Goal[]): { text: string; className: string } {
+  const failed = goals.filter((g) => g.status === "missed" || g.status === "violated").length;
   const unreachable = goals.filter((g) => g.status === "unreachable").length;
   const behind = goals.filter((g) => g.status === "behind").length;
   if (goals.length === 0) return { text: "No goals set", className: "text-muted-foreground" };
+  if (failed) return { text: `${failed} goal${failed > 1 ? "s" : ""} not kept`, className: "text-bad" };
   if (unreachable) return { text: `${unreachable} goal${unreachable > 1 ? "s" : ""} can't be met`, className: "text-bad" };
   if (behind) return { text: `${behind} goal${behind > 1 ? "s" : ""} behind`, className: "text-warn" };
   return { text: "Yes, all goals on track", className: "text-ok" };
