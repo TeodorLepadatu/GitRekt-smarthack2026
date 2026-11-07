@@ -148,4 +148,23 @@ export interface Metrics {
   decisions_clipped: number;
   goals_met: number;
   goals_total: number;
+
+  // The backend's own evaluation numbers (settlement/ledger.py metrics()). The
+  // dashboard does not need them, but they come with the response.
+  /** MWh charged + discharged. */
+  battery_throughput_mwh?: number;
+  /** Stored energy after the latest interval. */
+  soc_mwh?: number;
+  /** decisions_fallback / decisions_total, and decisions_clipped / decisions_total. */
+  fallback_rate?: number;
+  clip_rate?: number;
+  hard_goals_met?: number;
+  hard_goals_total?: number;
+  /** Hard goals that ended up missed or violated. */
+  hard_goals_violated?: number;
+  /** Forecast error against the actuals; null when nothing was measured. */
+  demand_mae_mw?: number | null;
+  production_mae_mw?: number | null;
+  /** How often the actual production fell inside its 10-90 % band. */
+  production_range_coverage?: number | null;
 }

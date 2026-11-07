@@ -70,13 +70,32 @@ All types live in [`src/api/types.ts`](src/api/types.ts). The mock layer uses ex
 | `POST /api/sim/run {speed}` | starts the simulation; **`speed: 0` pauses** |
 | `POST /api/sim/reset` | restarts the day at 00:00 |
 
-Points to confirm with the backend team:
+Settled with the backend. `dashboard/contract.py` builds exactly these shapes from the
+loop's objects, and `tests/test_dashboard_contract.py` parses this `types.ts` and checks
+every payload against it, so the two cannot drift apart:
 
-- `soc_mwh` is the energy stored at the **end** of the interval.
-- `/api/day` future slots carry the forecast only (see above).
-- `/api/state` and `/api/metrics` field names are proposals (the plan only fixed the interval and goal shapes).
+| This file | Built by |
+|---|---|
+| `Interval` (and the SSE `cycle` event) | `dashboard.interval_payload(record)` |
+| `ForecastInterval` | `dashboard.forecast_payload(...)` |
+| `DayResponse` | `dashboard.day_payload(runner)` |
+| `StateSnapshot` | `dashboard.state_payload(runner, running=, speed=)` |
+| `Metrics` | `dashboard.metrics_payload(runner)` |
+| `Goal[]` | `dashboard.goals_payload(runner)` |
+
+- `soc_mwh` is the energy stored at the **end** of the interval (the loop's `soc_after_mwh`).
+- `/api/day` future slots carry the forecast only, and their `break_even` is recomputed
+  from the price curve and the latest state of charge.
+- `demand_mw` and `production_mw` are measured; `solar_mw` and `wind_mw` are only
+  forecast apart, so the measured production is split between them in the forecast's
+  ratio. They always add up to `production_mw`, which is what `EnergyFlow` balances on.
+- `Metrics` also carries the backend's own evaluation numbers (forecast MAE, band
+  coverage, clip and fallback rates) as optional fields.
 - `speed: 0` on `/api/sim/run` as the pause command.
 - Goal `type` values: `reserve`, `min_sell_price`, `max_profit`.
+
+Still missing: the HTTP layer itself. The payloads are ready, but nothing serves them
+yet, so `VITE_USE_MOCKS=true` is still the only working mode (see `src/mocks/`).
 
 ## Code layout
 
