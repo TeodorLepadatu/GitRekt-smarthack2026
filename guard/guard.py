@@ -6,7 +6,10 @@ guard(decision, state, goal_config) -> GuardResult
     2. physical limits: SoC limits and max power (plan section 6 formulas)
     3. hard goals: reserve (forced charge / blocked discharge), min sell price
     4. physical limits always win over goals (you can't charge a full battery)
-    5. curtailment: only when price < 0 and surplus remains,
+    5. import cap (peak shaving, optional): lower the setpoint so the projected
+       grid import stays at or under max_import_mw, never below the floor that
+       steps 2-4 set (physics and hard goals still win)
+    6. curtailment: only when price < 0 and surplus remains,
        or when a min-sell goal blocks exporting a surplus
 
 Input `decision` is the validator output (validator.Decision or its dict):
@@ -18,6 +21,16 @@ Input `state` (feature builder / sensors for this interval):
 
 Output (plan section 5 "Guard -> site"):
     {"battery_setpoint_mw", "curtail_mw", "clipped", "applied_rules", "source", ...}
+
+Grid import (the simulator's balance, grid = production - curtailed - demand - setpoint):
+    import_mw = max(0, setpoint - net_mw),   net_mw = production - demand
+Curtailment only ever trims an export, so it never adds to an import. The cap
+therefore allows any setpoint <= net_mw + max_import_mw. Import cap rules:
+    import_cap_ok             projected import within the limit
+    import_cap_discharge      setpoint lowered into a discharge to shave the peak
+    import_cap_charge_limited charging reduced (but not turned into a discharge)
+    import_cap_unmet          the limit cannot be met: SoC, power or a hard goal won
+    import_cap_unchecked      net_mw missing, the cap could not be checked
 
 Sign convention: setpoint > 0 = CHARGE, < 0 = DISCHARGE. Never raises.
 """
@@ -32,6 +45,7 @@ from common import finite_float as _num
 from .goals import Bounds, apply_min_sell, apply_reserve, hard_goals, to_minutes
 
 EPS = 1e-9
+RULE_EPS_MW = 1e-3  # setpoints are rounded to 4 decimals; smaller changes are not reported
 
 
 @dataclass
@@ -43,6 +57,8 @@ class GuardResult:
     source: str
     requested_setpoint_mw: float = 0.0
     expected_soc_after_mwh: Optional[float] = None
+    # Peak shaving: grid import the setpoint leads to on the interval's net_mw (None: no cap set).
+    projected_import_mw: Optional[float] = None
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -60,10 +76,15 @@ def guard(
     state: Mapping[str, Any],
     goal_config: Any = None,
     cfg: BatteryConfig = BatteryConfig(),
+    *,
+    max_import_mw: Optional[float] = None,
 ) -> GuardResult:
-    """Turn a validated decision into safe setpoints. Never raises."""
+    """Turn a validated decision into safe setpoints. Never raises.
+
+    ``max_import_mw``: grid import cap for peak shaving; None (default) = no cap.
+    """
     try:
-        return _guard(decision, state or {}, goal_config, cfg)
+        return _guard(decision, state or {}, goal_config, cfg, _num(max_import_mw))
     except Exception as exc:  # last line of defence: hold the battery
         return GuardResult(
             battery_setpoint_mw=0.0,
@@ -75,7 +96,8 @@ def guard(
         )
 
 
-def _guard(decision: Any, state: Mapping[str, Any], goal_config, cfg: BatteryConfig) -> GuardResult:
+def _guard(decision: Any, state: Mapping[str, Any], goal_config, cfg: BatteryConfig,
+           max_import_mw: Optional[float] = None) -> GuardResult:
     rules: list[str] = []
     warnings: list[str] = []
     source = str(_get(decision, "source", "unknown"))
@@ -134,7 +156,11 @@ def _guard(decision: Any, state: Mapping[str, Any], goal_config, cfg: BatteryCon
     elif not any(r.startswith("soc_") for r in rules):
         rules.append("soc_limits_ok")
 
-    # 5. curtailment
+    # 5. import cap (peak shaving)
+    if max_import_mw is not None:
+        setpoint = _apply_import_cap(setpoint, max_import_mw, net, bounds, rules, warnings)
+
+    # 6. curtailment
     curtail_mw = 0.0
     wants_curtail = bool(_get(decision, "curtail", False))
     surplus_left = max(0.0, (net or 0.0) - max(setpoint, 0.0))
@@ -165,5 +191,33 @@ def _guard(decision: Any, state: Mapping[str, Any], goal_config, cfg: BatteryCon
         source=source,
         requested_setpoint_mw=round(requested, 4),
         expected_soc_after_mwh=round(cfg.energy_after(stored, setpoint), 4),
+        projected_import_mw=(None if max_import_mw is None or net is None
+                             else round(max(0.0, setpoint - net), 4)),
         warnings=warnings,
     )
+
+
+def import_mw(setpoint_mw: float, net_mw: float) -> float:
+    """Grid import for one interval: max(0, setpoint - (production - demand))."""
+    return max(0.0, setpoint_mw - net_mw)
+
+
+def _apply_import_cap(setpoint: float, limit: float, net: Optional[float], bounds: Bounds,
+                      rules: list[str], warnings: list[str]) -> float:
+    """Lower ``setpoint`` so the grid import stays <= ``limit``, never below ``bounds.lo``."""
+    if net is None:
+        rules.append("import_cap_unchecked")
+        warnings.append("net_mw missing: import cap not checked")
+        return setpoint
+    cap = net + max(0.0, limit)          # highest setpoint that keeps import <= limit
+    if setpoint <= cap + EPS:
+        rules.append("import_cap_ok")
+        return setpoint
+    target = max(cap, bounds.lo)         # physics and hard goals keep the last word
+    if target < setpoint - RULE_EPS_MW:  # name only changes the site would notice
+        rules.append("import_cap_discharge" if target < -RULE_EPS_MW else "import_cap_charge_limited")
+    if cap < bounds.lo - EPS:
+        rules.append("import_cap_unmet")
+        warnings.append(f"import cap {limit:g} MW unmet: {import_mw(target, net):.3f} MW import "
+                        f"({bounds.lo_rule} allows no more discharge)")
+    return target

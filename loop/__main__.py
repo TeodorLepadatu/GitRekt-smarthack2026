@@ -44,6 +44,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--imbalance", action="store_true",
                     help="with --date: charge for deviating from the promised grid position, and let "
                          "the battery defend it (synthetic_out/prices.csv)")
+    ap.add_argument("--max-import", type=float, default=None, metavar="MW",
+                    help="grid import cap for peak shaving, MW (default: ENERGY_AGENT_MAX_IMPORT_MW, unset = none)")
     ap.add_argument("--out", help="write every interval record to this JSONL file")
     ap.add_argument("--quiet", action="store_true", help="print only the summary")
     args = ap.parse_args(argv)
@@ -76,7 +78,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     on_interval = None if args.quiet else (lambda rec: print(rec["dashboard_line"], flush=True))
     runner = DayRunner(day, goals, start_soc_mwh=args.start_soc, start_time=args.start,
-                       battery=settings.battery, llm_call=llm_call, on_interval=on_interval, log_path=args.out)
+                       battery=settings.battery, llm_call=llm_call, on_interval=on_interval, log_path=args.out,
+                       max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import)
     if args.speed > 0:
         runner.run_realtime(args.speed, until=args.until)
     else:
@@ -93,6 +96,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     if m["imbalance_eur"]:
         print(f"imbalance: EUR {m['imbalance_eur']:+.2f} over {m['deviation_mwh']:.2f} MWh that the "
               f"battery could not absorb")
+    if m["import_limit_mw"] is not None:
+        print(f"grid import: peak {m['peak_import_mw']:.2f} MW (without a battery "
+              f"{m['peak_import_mw_no_battery']:.2f} MW), limit {m['import_limit_mw']:g} MW, "
+              f"{m['import_limit_exceeded_intervals']} intervals over it")
     print(f"decisions: {m['decisions_llm']} LLM, {m['decisions_fallback']} fallback, {m['decisions_clipped']} clipped by the guard")
     if m["demand_mae_mw"] is not None:
         print(f"forecast error: demand {m['demand_mae_mw']:.3f} MW MAE, production {m['production_mae_mw']:.3f} MW MAE, "

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useMetrics } from "@/api/hooks";
 import type { Metrics } from "@/api/types";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
-import { fmtEur, fmtMwh, fmtPct } from "@/lib/labels";
+import { fmtEur, fmtMw, fmtMwh, fmtPct } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 type Figure = { label: string; value: ReactNode; note?: string; tone?: string };
@@ -44,6 +44,25 @@ function trustFigures(d: Metrics): Figure[] {
   ];
 }
 
+/** Peak shaving status, shown only when an import cap is configured. */
+function ImportLimitLine({ d }: { d: Metrics }) {
+  if (d.import_limit_mw == null) return null;
+  const over = d.import_limit_exceeded_intervals ?? 0;
+  const peak = d.peak_import_mw ?? 0;
+  return (
+    <p className="pt-3 text-sm text-ink-3">
+      Grid import limit <span className="num text-ink-2">{fmtMw(d.import_limit_mw)}</span>
+      {" · "}peak today <span className="num text-ink-2">{fmtMw(peak)}</span>
+      {d.peak_import_time ? ` at ${d.peak_import_time}` : ""}
+      {d.peak_import_mw_no_battery != null && ` (${fmtMw(d.peak_import_mw_no_battery)} without battery)`}
+      {" · "}
+      <span className={cn("num", over ? "text-bad" : "text-ok")}>
+        {over ? `${over} interval${over === 1 ? "" : "s"} over the limit` : "never over the limit"}
+      </span>
+    </p>
+  );
+}
+
 /** One ruled row of figures (a ledger line, not a grid of cards). */
 export function MetricsCards({ kind }: { kind: "energy" | "trust" }) {
   const m = useMetrics();
@@ -51,14 +70,17 @@ export function MetricsCards({ kind }: { kind: "energy" | "trust" }) {
   if (m.isError && !m.data) return <PanelError what="today's figures" onRetry={() => m.refetch()} />;
   const figures = kind === "energy" ? energyFigures(m.data) : trustFigures(m.data);
   return (
-    <dl className="grid grid-cols-2 border-y border-rule-strong sm:grid-cols-3 lg:grid-cols-5">
-      {figures.map((f, i) => (
-        <div key={f.label} className={cn("flex flex-col gap-1 py-5 pr-6", i > 0 && "lg:border-l lg:pl-6")}>
-          <dt className="label">{f.label}</dt>
-          <dd className={cn("num text-3xl font-medium", f.tone)}>{f.value}</dd>
-          {f.note && <dd className="text-sm text-ink-3">{f.note}</dd>}
-        </div>
-      ))}
-    </dl>
+    <>
+      <dl className="grid grid-cols-2 border-y border-rule-strong sm:grid-cols-3 lg:grid-cols-5">
+        {figures.map((f, i) => (
+          <div key={f.label} className={cn("flex flex-col gap-1 py-5 pr-6", i > 0 && "lg:border-l lg:pl-6")}>
+            <dt className="label">{f.label}</dt>
+            <dd className={cn("num text-3xl font-medium", f.tone)}>{f.value}</dd>
+            {f.note && <dd className="text-sm text-ink-3">{f.note}</dd>}
+          </div>
+        ))}
+      </dl>
+      {kind === "energy" && <ImportLimitLine d={m.data} />}
+    </>
   );
 }

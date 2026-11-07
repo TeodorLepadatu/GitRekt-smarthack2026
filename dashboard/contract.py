@@ -226,8 +226,14 @@ def metrics_payload(runner: Any) -> dict[str, Any]:
                  "value_added_eur", "energy_sold_mwh", "energy_bought_mwh", "curtailed_mwh"):
         metrics[name] = _num(metrics.get(name))
     for name in ("decisions_total", "decisions_llm", "decisions_fallback", "decisions_clipped",
-                 "goals_met", "goals_total"):
+                 "goals_met", "goals_total", "import_limit_exceeded_intervals"):
         metrics[name] = int(_num(metrics.get(name)))
+    # Peak shaving: the limit stays null when no cap is set.
+    for name in ("peak_import_mw", "peak_import_mw_no_battery"):
+        metrics[name] = _num(metrics.get(name))
+    metrics["import_limit_mw"] = _opt(metrics.get("import_limit_mw"))
+    metrics["peak_import_time"] = (None if metrics.get("peak_import_time") is None
+                                   else _str(metrics.get("peak_import_time")))
     return metrics
 
 

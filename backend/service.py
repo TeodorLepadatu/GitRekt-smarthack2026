@@ -58,8 +58,10 @@ class Backend:
         day_factory: Callable[[], DayInput] = demo_day,
         clock: Callable[[], float] = _time.monotonic,
         log_path: Optional[str] = None,
+        max_import_mw: Optional[float] = None,
     ):
         self.goals = goal_store
+        self.max_import_mw = max_import_mw  # grid import cap (peak shaving); None = none
         self.llm_call = llm_call
         self.cfg = battery or BatteryConfig()
         self.start_soc_mwh = start_soc_mwh
@@ -287,7 +289,8 @@ class Backend:
     def _new_day(self) -> None:
         self._day = self.day_factory()
         self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self.start_soc_mwh,
-                                 battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path)
+                                 battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path,
+                                 max_import_mw=self.max_import_mw)
         self._publish()
         self._deadline = None
 

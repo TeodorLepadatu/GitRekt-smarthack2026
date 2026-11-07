@@ -178,4 +178,15 @@ export interface Metrics {
   production_mae_mw?: number | null;
   /** How often the actual production fell inside its 10-90 % band. */
   production_range_coverage?: number | null;
+
+  // Peak shaving (grid import cap). Import power is the 15-minute average, MW.
+  /** Configured import cap; null when no cap is set. */
+  import_limit_mw?: number | null;
+  /** Highest settled grid import today, and when it happened. */
+  peak_import_mw?: number;
+  peak_import_time?: string | null;
+  /** The same peak without the battery: max(0, demand − production). */
+  peak_import_mw_no_battery?: number;
+  /** Intervals whose settled import went over the cap. */
+  import_limit_exceeded_intervals?: number;
 }
