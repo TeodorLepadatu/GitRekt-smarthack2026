@@ -231,6 +231,17 @@ from a different folder, set the environment variable `PREDICTIONS_MODELS_DIR`.
 | `POST /forecast/demand` | `demand_mw`, `demand_low_mw`, `demand_high_mw` |
 | `POST /forecast/production` | `solar_*`, `wind_*`, `prod_low/high_mw` (solar + wind range), `total_*` |
 | `POST /forecast` | both, merged per timestamp |
+| `GET /csv` | the CSV files under `predictions/`: name, download URL, size, columns |
+| `GET /csv/{name}` | downloads one file, e.g. `/csv/dataset.csv` or `/csv/reports/eval_2026.csv` |
+
+**CSV downloads**
+- **Forecasts:** add `"format": "csv"` to any forecast request to get the predictions table
+  as a CSV file instead of JSON. The columns are the same as in the JSON.
+- **Filtering:** `GET /csv/{name}?start=...&end=...` returns only rows with
+  `start <= timestamp < end`, as unix seconds or ISO. This works for files with a `timestamp`
+  column, e.g. `/csv/dataset.csv?start=2026-11-01T00:00:00Z`.
+- **Which files:** only CSV files under `predictions/` can be downloaded. Any other name
+  returns `404`.
 
 Request body: give either a list of timestamps, or a start and end.
 
@@ -254,7 +265,7 @@ Request body: give either a list of timestamps, or a start and end.
 
 ### Tests
 
-`python -m pytest tests/test_predictions_api.py -q` runs 18 tests. They need no network and
+`python -m pytest tests/test_predictions_api.py -q` runs 26 tests. They need no network and
 use the saved models. They check:
 - the API returns the same numbers as calling the classes directly;
 - `/forecast` matches `/forecast/demand` + `/forecast/production`;
@@ -264,6 +275,7 @@ use the saved models. They check:
 - `start`/`end` ranges;
 - the edges of the 7-day window and the `issued_at` bounds;
 - malformed requests are rejected;
+- CSV output for forecasts, and the `/csv` list, download, filter and error cases;
 - a full week of values is sane: no nulls, low ≤ mid ≤ high, no solar at night, realistic
   demand.
 
