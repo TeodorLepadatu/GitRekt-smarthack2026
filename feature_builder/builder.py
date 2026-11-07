@@ -41,9 +41,9 @@ from guard.goals import to_minutes
 from .goals import goals_progress
 from .prices import PriceCurve, intervals_to_empty
 
-# Wear in EUR per MWh of throughput (plan section 5 settlement check). Holding a
-# MWh for later costs one charge and one discharge, so break-even carries 2x.
-WEAR_EUR_PER_MWH = 2.5
+# Wear comes from battery.BatteryConfig, the same rate settlement charges.
+# Holding a MWh for later costs one charge and one discharge, so break-even
+# carries 2x that rate (plan section 5: EUR 2.5 per MWh, EUR 5 per round trip).
 
 # Price zone thresholds in EUR/MWh around break-even. These must stay equal to
 # prompt_assembly.situation; tests/test_feature_builder.py checks that they do.
@@ -95,10 +95,12 @@ def build_features(
     stored_mwh: float,
     goal_config: Any = None,
     battery: Optional[BatteryConfig] = None,
-    wear_eur_per_mwh: float = WEAR_EUR_PER_MWH,
+    wear_eur_per_mwh: Optional[float] = None,
 ) -> dict[str, Any]:
     """Build prompt section 8 and the goal progress for one 15-minute interval."""
     cfg = battery or BatteryConfig()
+    if wear_eur_per_mwh is None:
+        wear_eur_per_mwh = cfg.wear_eur_per_mwh
     if isinstance(forecast, Mapping):
         forecast = SiteForecast.from_mapping(forecast)
     curve = prices if isinstance(prices, PriceCurve) else PriceCurve(prices)

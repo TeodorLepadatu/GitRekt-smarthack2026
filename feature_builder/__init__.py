@@ -15,7 +15,6 @@
 """
 
 from .builder import (
-    WEAR_EUR_PER_MWH,
     FeatureBuilderError,
     SiteForecast,
     build_features,
@@ -27,7 +26,6 @@ __all__ = [
     "build_features",
     "SiteForecast",
     "FeatureBuilderError",
-    "WEAR_EUR_PER_MWH",
     "PriceCurve",
     "PriceCurveError",
     "hhmm",

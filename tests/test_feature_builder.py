@@ -349,7 +349,16 @@ class ContractTest(unittest.TestCase):
     def test_settlement_gets_the_interval_and_the_wear_rate(self):
         f = features()
         self.assertEqual(f["interval_h"], B.interval_h)
-        self.assertEqual(f["wear_eur_per_mwh"], 2.5)
+        # One wear rate for the whole project: settlement charges the same one.
+        self.assertEqual(f["wear_eur_per_mwh"], B.wear_eur_per_mwh)
+
+    def test_a_custom_wear_rate_moves_break_even(self):
+        pricey = BatteryConfig(wear_eur_per_mwh=20.0)
+        f = features(battery=pricey)
+        self.assertEqual(f["wear_eur_per_mwh"], 20.0)
+        self.assertAlmostEqual(
+            f["break_even"], round(B.round_trip_eff * f["break_even_price"] - 40.0, 1))
+        self.assertLess(f["break_even"], features()["break_even"])
 
 
 class SiteForecastTest(unittest.TestCase):

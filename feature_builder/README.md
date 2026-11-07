@@ -112,6 +112,11 @@ examples to be regenerated from this code, which will settle it.
 always get the same rank. A flat plateau at the cheapest price therefore reads
 slightly above 0, and a unique cheapest interval reads exactly 0.
 
+**The wear rate comes from `battery.BatteryConfig`.** Break-even charges twice
+that rate, because holding a MWh for later costs one charge and one discharge.
+Settlement charges the same rate per MWh of throughput, so the number the agent
+decides on and the number it is billed for can never drift apart.
+
 **It raises rather than guesses.** A missing state of charge, an unreadable time
 or a demand figure that is not a number raises `FeatureBuilderError`. The
 pipeline catches it and the rule-based fallback takes the interval, which is
