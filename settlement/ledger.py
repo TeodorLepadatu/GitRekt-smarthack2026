@@ -2,14 +2,18 @@
 
     ledger = DayLedger(goal_config, battery=cfg, start_soc_mwh=4.0, log_path="logs/settlement.jsonl")
     cycle = run_cycle(features, goal_config, ...)               # pipeline
-    record = ledger.record(cycle, features, actual)             # actual = site/simulator measurements
+    step = sim.step(cycle.setpoint, demand, production)        # site simulator (the physics)
+    record = ledger.record(cycle, features, step)
     record["dashboard_line"], ledger.metrics(), ledger.goal_summary()
 
-``actual`` holds what really happened in the interval:
-    {"demand_mw": 4.7, "production_mw": 4.9, "stored_mwh": 3.5 (sensor, optional), "price_now": 95 (optional)}
-Missing actual values fall back to the forecast in ``features`` (and say so in
-``warnings``). The SoC is taken from ``actual``, then ``features["stored_mwh"]``
-(the sensor value the guard used), then the ledger's own SoC after the last interval.
+``actual`` is what really happened in the interval, either:
+- the site simulator's ``StepResult`` (normal loop): settled as it is, the
+  physics is not run a second time; or
+- measurements: {"demand_mw": 4.7, "production_mw": 4.9, "stored_mwh": 3.5 (sensor, optional),
+  "price_now": 95 (optional)}. The ledger then runs the simulator for this one
+  interval. Missing values fall back to the forecast in ``features`` (and say so
+  in ``warnings``). The SoC is taken from ``actual``, then ``features["stored_mwh"]``
+  (the sensor value the guard used), then the ledger's own SoC after the last interval.
 
 Goal cost (plan section 2): profit given up versus a profit-only plan. That
 needs the same day run without the goals, so ``goal_costs`` takes a function
@@ -25,8 +29,10 @@ from typing import Any, Callable, Mapping, Optional
 from battery import BatteryConfig
 from common import finite_float, goal_config_dict
 
+from simulator import StepResult
+
 from .goals import GoalTracker
-from .settle import IntervalSettlement, forecast_errors, settle_interval
+from .settle import IntervalSettlement, forecast_errors, settle, settle_interval
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -63,11 +69,23 @@ class DayLedger:
 
     # ------------------------------------------------------------------ record
     def record(self, cycle: Any, features: Mapping[str, Any], actual: Optional[Mapping[str, Any]] = None) -> dict:
-        """Settle one cycle (pipeline.CycleResult or its dict) with the actual site values."""
-        actual = actual or {}
+        """Settle one cycle (pipeline.CycleResult or its dict) with what actually happened:
+        the site simulator's StepResult, or measured values (see the module docstring)."""
         decision = _get(cycle, "decision") or {}
         setpoint = _get(cycle, "setpoint") or {}
         warnings: list[str] = []
+
+        if isinstance(actual, StepResult):
+            price = finite_float(features.get("price_now"))
+            if price is None:
+                price = 0.0
+                warnings.append("price missing: settled at EUR 0")
+            time = features.get("time") or actual.time or "??:??"
+            s = settle(actual, price, time=str(time), cfg=self.cfg)
+            return self._book(s, warnings, cycle, decision, setpoint, features)
+
+        actual = actual or {}
+        time = str(features.get("time") or actual.get("time") or "??:??")
 
         def pick(key: str, *fallbacks: Any) -> Optional[float]:
             for src in (actual, *fallbacks):
@@ -92,9 +110,17 @@ class DayLedger:
         if soc is None:
             soc = self.cfg.e_min_mwh
             warnings.append("state of charge unknown: assumed the minimum")
+        # The simulator rejects impossible measurements; the books must never stop the site.
+        for name, value in (("demand", demand), ("production", production)):
+            if value < 0:
+                warnings.append(f"actual {name} {value} MW is negative: settled as 0")
+        demand, production = max(0.0, demand), max(0.0, production)
+        if not 0.0 <= soc <= self.cfg.e_max:
+            warnings.append(f"state of charge {soc} MWh is outside the battery: clamped")
+            soc = min(self.cfg.e_max, max(0.0, soc))
 
         s: IntervalSettlement = settle_interval(
-            time=str(features.get("time") or actual.get("time") or "??:??"),
+            time=time,
             price_eur_mwh=price,
             soc_before_mwh=soc,
             battery_setpoint_mw=finite_float(_get(setpoint, "battery_setpoint_mw")) or 0.0,
@@ -103,6 +129,11 @@ class DayLedger:
             production_mw=production,
             cfg=self.cfg,
         )
+        return self._book(s, warnings, cycle, decision, setpoint, features)
+
+    def _book(self, s: IntervalSettlement, warnings: list[str], cycle: Any, decision: Any,
+              setpoint: Any, features: Mapping[str, Any]) -> dict:
+        """Goal status, running totals, dashboard line and log for one settled interval."""
         s.warnings = warnings + s.warnings
         statuses = self.goals.update(s)
         self.soc_mwh = s.soc_after_mwh
@@ -111,7 +142,7 @@ class DayLedger:
         rec.update({f"goal_{gid}": status for gid, status in statuses.items()})
         rec["goals"] = {st.id: st.message for st in self.goals.states.values()}
         rec["profit_today_eur"] = round(sum(r["profit_eur"] for r in self.records) + s.profit_eur, 2)
-        rec["forecast"] = forecast_errors(dict(features), demand, production)
+        rec["forecast"] = forecast_errors(dict(features), s.demand_mw, s.production_mw)
         rec["decision"] = {
             "source": _get(decision, "source"),
             "fallback_reason": _get(decision, "fallback_reason"),

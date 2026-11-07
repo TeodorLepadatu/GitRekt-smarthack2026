@@ -25,6 +25,8 @@ pytest -q
 | `test_goal_parser_llm.py` | Goal parser against the real model; skipped unless Ollama has `Settings().goal_model` |
 | `test_goal_store.py` | `GoalStore`: parse only on change, keep the old config while questions are open, save/reload |
 | `test_decision.py` | `DecisionAgent` sends the prompt with the schema; Ollama errors reach the validator as `llm_error` |
+| `test_simulator.py` | Site simulator: battery limits, grid trade, curtailment, energy balance, full cycles |
+| `test_simulator_settlement.py` | Settlement uses exactly the simulator's physics; ledger and simulator stay in step over a day loop |
 
 ### `test_pipeline.py`
 
