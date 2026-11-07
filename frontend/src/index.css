@@ -1,0 +1,203 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Light: warm paper and ink. */
+:root {
+  --radius: 1rem;
+  --background: oklch(0.972 0.009 85);
+  --foreground: oklch(0.25 0.03 262);
+  --card: oklch(0.995 0.004 85);
+  --card-foreground: var(--foreground);
+  --primary: oklch(0.27 0.035 262);
+  --primary-foreground: oklch(0.98 0.006 85);
+  --secondary: oklch(0.945 0.012 85);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.945 0.012 85);
+  --muted-foreground: oklch(0.5 0.02 262);
+  --accent: oklch(0.93 0.016 85);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.56 0.21 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.9 0.014 82);
+  --input: oklch(0.86 0.016 82);
+  --ring: oklch(0.62 0.13 250);
+  --shadow: 0 1px 2px oklch(0.3 0.03 70 / 0.06), 0 8px 24px -12px oklch(0.3 0.03 70 / 0.14);
+
+  /* domain colours */
+  --charge: oklch(0.57 0.15 152);
+  --discharge: oklch(0.64 0.18 48);
+  --hold: oklch(0.58 0.02 262);
+  --grid-c: oklch(0.52 0.17 290);
+  --price: #6250d6;
+  --soc: #1baf7a;
+  --solar: #eda100;
+  --wind: #2a78d6;
+  --demand: oklch(0.42 0.03 262);
+  --ok: oklch(0.55 0.15 152);
+  --warn: oklch(0.6 0.15 62);
+  --info: oklch(0.54 0.16 255);
+  --bad: oklch(0.55 0.21 27);
+  --ai: oklch(0.52 0.19 295);
+  --negative-zone: oklch(0.6 0.16 150 / 0.16);
+  --hero-glow: oklch(0.9 0.08 85 / 0.6);
+}
+
+/* Dark: deep ink with the same hues stepped up. */
+.dark {
+  --background: oklch(0.165 0.018 262);
+  --foreground: oklch(0.95 0.008 85);
+  --card: oklch(0.205 0.02 262);
+  --card-foreground: var(--foreground);
+  --primary: oklch(0.93 0.02 85);
+  --primary-foreground: oklch(0.2 0.025 262);
+  --secondary: oklch(0.26 0.022 262);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.26 0.022 262);
+  --muted-foreground: oklch(0.73 0.018 262);
+  --accent: oklch(0.29 0.024 262);
+  --accent-foreground: var(--foreground);
+  --border: oklch(0.3 0.022 262);
+  --input: oklch(0.36 0.022 262);
+  --ring: oklch(0.66 0.12 250);
+  --shadow: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -14px oklch(0 0 0 / 0.6);
+
+  --charge: oklch(0.75 0.17 152);
+  --discharge: oklch(0.77 0.16 55);
+  --hold: oklch(0.7 0.02 262);
+  --grid-c: oklch(0.74 0.14 290);
+  --price: #9085e9;
+  --soc: #199e70;
+  --solar: #c98500;
+  --wind: #3987e5;
+  --demand: oklch(0.88 0.02 262);
+  --ok: oklch(0.76 0.17 152);
+  --warn: oklch(0.82 0.15 75);
+  --info: oklch(0.74 0.14 255);
+  --bad: oklch(0.72 0.19 25);
+  --ai: oklch(0.75 0.15 295);
+  --negative-zone: oklch(0.74 0.17 150 / 0.2);
+  --hero-glow: oklch(0.4 0.07 262 / 0.5);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, sans-serif;
+  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 6px);
+  --radius-lg: calc(var(--radius) - 2px);
+  --radius-xl: var(--radius);
+  --radius-2xl: calc(var(--radius) + 6px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-charge: var(--charge);
+  --color-discharge: var(--discharge);
+  --color-hold: var(--hold);
+  --color-grid: var(--grid-c);
+  --color-price: var(--price);
+  --color-soc: var(--soc);
+  --color-solar: var(--solar);
+  --color-wind: var(--wind);
+  --color-demand: var(--demand);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --color-bad: var(--bad);
+  --color-ai: var(--ai);
+  --shadow-card: var(--shadow);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+.num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Energy flow: dashes travel along each line in the direction of the power. */
+@keyframes flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+.flow-line {
+  stroke-dasharray: 2 12;
+  stroke-linecap: round;
+  animation: flow var(--flow-dur, 1.2s) linear infinite;
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+.pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-line,
+  .pulse-ring {
+    animation: none;
+  }
+}
+
+/* Recharts follows the theme */
+.recharts-cartesian-grid line {
+  stroke: var(--border);
+}
+.recharts-text {
+  fill: var(--muted-foreground);
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: var(--border);
+}

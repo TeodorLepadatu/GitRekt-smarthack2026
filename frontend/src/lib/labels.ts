@@ -1,0 +1,166 @@
+/** All plain-language wording for the operator lives here. */
+import type { Confidence, DaySlot, Decision, Goal, GoalStatus, Interval } from "@/api/types";
+
+export type ActionKind = "charge" | "discharge" | "hold";
+
+const HOLD_EPS = 0.005;
+
+export function actionKind(setpointMw: number): ActionKind {
+  if (setpointMw > HOLD_EPS) return "charge";
+  if (setpointMw < -HOLD_EPS) return "discharge";
+  return "hold";
+}
+
+export const fmtMw = (v: number) => `${v.toFixed(2)} MW`;
+export const fmtMwh = (v: number) => `${v.toFixed(2)} MWh`;
+export const fmtEur = (v: number) =>
+  `${v < 0 ? "−" : ""}€${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const fmtPrice = (v: number) => `${fmtEur(v)}/MWh`;
+export const fmtPct = (v: number) => `${Math.round(v)}%`;
+
+export function actionLabel(setpointMw: number): string {
+  const kind = actionKind(setpointMw);
+  if (kind === "charge") return `Charging ${fmtMw(setpointMw)}`;
+  if (kind === "discharge") return `Discharging ${fmtMw(Math.abs(setpointMw))}`;
+  return "Holding";
+}
+
+export const actionShort: Record<ActionKind, string> = {
+  charge: "Charge",
+  discharge: "Discharge",
+  hold: "Hold",
+};
+
+export type SourceKind = "ai" | "backup" | "safety";
+
+/** Who decided this interval. Safety adjustment wins over the decision source. */
+export function sourceKind(iv: Pick<Interval, "decision" | "guard">): SourceKind {
+  if (iv.guard.clipped) return "safety";
+  return iv.decision.source === "fallback" ? "backup" : "ai";
+}
+
+export const sourceLabel: Record<SourceKind, string> = {
+  ai: "AI",
+  backup: "Backup rules",
+  safety: "Adjusted by safety",
+};
+
+export const sourceHint: Record<SourceKind, string> = {
+  ai: "The AI made this decision and it passed all safety checks.",
+  backup: "The AI's answer could not be used, so the backup rules decided.",
+  safety: "The safety layer changed the decision to respect battery limits or your goals.",
+};
+
+export function fallbackReasonText(d: Decision): string | null {
+  if (d.source !== "fallback") return null;
+  if (d.fallback_reason === "timeout") return "AI took too long, backup rules decided";
+  return "AI answer was unusable, backup rules decided";
+}
+
+export const confidenceLabel: Record<Confidence, string> = {
+  low: "Low confidence",
+  medium: "Medium confidence",
+  high: "High confidence",
+};
+
+export const goalStatusLabel: Record<GoalStatus, string> = {
+  on_track: "On track",
+  behind: "Behind",
+  met: "Met",
+  unreachable: "Can't be met",
+};
+
+/** Text used to quote a goal inside rule messages. */
+function goalName(id: string, goals: Goal[]): string {
+  return goals.find((g) => g.id === id)?.source_text ?? `goal ${id}`;
+}
+
+/**
+ * Translate guard applied_rules into operator sentences.
+ * Rules that are not interesting to the operator return nothing.
+ */
+export function ruleText(rule: string, goals: Goal[]): string | null {
+  switch (rule) {
+    case "soc_max_limit":
+      return "Battery almost full, charging limited";
+    case "soc_min_limit":
+      return "Battery almost empty, discharging limited";
+    case "curtail_applied":
+    case "curtail_forced_min_sell":
+      return "Part of the solar/wind output was switched off";
+    case "no_soc_hold":
+    case "guard_error_hold":
+      return "Safe mode: battery held";
+  }
+  const m = /^goal_(.+)_(forced_charge|blocked_discharge|blocked_export|unreachable)$/.exec(rule);
+  if (m) {
+    const name = goalName(m[1], goals);
+    switch (m[2]) {
+      case "forced_charge":
+        return `Charging at full power to meet '${name}'`;
+      case "blocked_discharge":
+        return `Discharge limited to keep '${name}'`;
+      case "blocked_export":
+        return "Not selling: price below your minimum";
+      case "unreachable":
+        return `Warning: '${name}' can no longer be met`;
+    }
+  }
+  // *_ok, *_hold, curtail_blocked_*, fraction_clamped, ... are not shown.
+  return null;
+}
+
+export function rulesText(rules: string[], goals: Goal[]): string[] {
+  const out = rules.map((r) => ruleText(r, goals)).filter((t): t is string => t !== null);
+  return [...new Set(out)];
+}
+
+/** Short description of a goal's progress, e.g. "3.50 of 6.00 MWh, 3 h left". */
+export function goalProgressText(g: Goal): string | null {
+  if (g.type !== "reserve" || g.mwh == null) return null;
+  const stored = Math.min(g.stored_mwh ?? 0, g.mwh);
+  let text = `${stored.toFixed(2)} of ${fmtMwh(g.mwh)}`;
+  if (g.status !== "met" && g.hours_left != null && g.hours_left > 0) {
+    text += `, ${fmtHours(g.hours_left)} left`;
+  }
+  return text;
+}
+
+export function fmtHours(h: number): string {
+  if (h >= 1) {
+    const whole = Math.floor(h);
+    const min = Math.round((h - whole) * 60);
+    return min ? `${whole} h ${min} min` : `${whole} h`;
+  }
+  return `${Math.round(h * 60)} min`;
+}
+
+export const goalTypeLabel: Record<Goal["type"], string> = {
+  reserve: "Energy reserve",
+  min_sell_price: "Minimum sell price",
+  max_profit: "Objective",
+};
+
+/** The next notable thing in the price forecast, for the "Coming up" line. */
+export function upNextText(slots: DaySlot[], now: string | null): string | null {
+  const start = now ? slots.findIndex((s) => s.time === now) + 1 : 0;
+  const future = slots.slice(start);
+  if (future.length === 0) return null;
+  const firstNeg = future.find((s) => s.price_eur_mwh < 0);
+  const firstPeak = future.find((s) => s.price_eur_mwh >= s.break_even);
+  const pick =
+    firstNeg && (!firstPeak || firstNeg.time < firstPeak.time)
+      ? { s: firstNeg, text: "prices go below zero — the battery can charge and get paid for it." }
+      : firstPeak
+        ? { s: firstPeak, text: "prices rise above break-even — a good time to sell stored energy." }
+        : null;
+  if (!pick) return "No price spikes or negative prices expected for the rest of today.";
+  return pick.s === future[0] ? `From now, ${pick.text}` : `From ${pick.s.time}, ${pick.text}`;
+}
+
+export const GOAL_EXAMPLES = [
+  "Maximise profit",
+  "Store 6 MWh by 18:00",
+  "Keep 2 MWh backup overnight",
+  "Never sell below €50/MWh",
+];

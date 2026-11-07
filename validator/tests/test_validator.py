@@ -261,6 +261,10 @@ class TestDecide(unittest.TestCase):
         d = decide("p", PLAN_FEATURES, llm_call=lambda p: json.dumps(PLAN_OUTPUT), logger=bad_logger)
         self.assertEqual(d.source, "llm")
 
+    def test_llm_call_is_required(self):
+        with self.assertRaises(TypeError):
+            decide("p", PLAN_FEATURES)
+
     def test_to_dict_has_guard_fields(self):
         d = decide("p", PLAN_FEATURES, llm_call=lambda p: json.dumps(PLAN_OUTPUT)).to_dict()
         for key in ("battery_fraction", "curtail", "source"):

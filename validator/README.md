@@ -19,20 +19,20 @@ Pure Python standard library, no dependencies.
 ```python
 from validator import decide
 
-decision = decide(prompt, features)        # calls local Ollama (qwen3:4b)
+decision = decide(prompt, features, llm_call=llm_fn, timeout_s=60, logger=log_fn)
 decision.to_dict()
 # {"battery_fraction": 0.29, "curtail": False, "source": "llm",
 #  "confidence": "medium", "explanation_for_operator": "...",
 #  "fallback_reason": None, "warnings": [], "latency_s": 2.1, ...}
 ```
 
-Without Ollama, pass any function `prompt -> raw text`:
+- `llm_call` (**required**): any function `prompt -> raw LLM text`. It comes from
+  the **Small LLM** part, which owns Ollama, the model version and its settings.
+  For testing, pass a fake, e.g. `lambda p: '{"battery_fraction": 0.3, "curtail": false}'`.
+- `logger` (optional): receives `{prompt, raw_output, decision}` for every call.
+  It comes from the **Settlement + logging** part.
 
-```python
-decide(prompt, features, llm_call=my_llm, timeout_s=60, logger=print)
-```
-
-`decide()` never raises. If the LLM is unreachable, the fallback decides.
+`decide()` never raises. If `llm_call` fails or is too slow, the fallback decides.
 
 ## What gets checked
 
@@ -64,7 +64,7 @@ plan's *valid JSON rate* and *fallback rate* metrics.
 `matching_fraction`, `max_charge_mw`, and `goals: [{status, even_pace_fraction}]`.
 
 **Assumptions to confirm with the team** (all kept in [`schema.py`](schema.py)):
-the sign convention, the field names above, and who owns the Ollama call.
+the sign convention and the field names above.
 
 ## Files
 
@@ -73,7 +73,7 @@ the sign convention, the field names above, and who owns the Ollama call.
 | `schema.py` | contracts, ranges, `Decision`, fallback reasons |
 | `validator.py` | `extract_json()`, `validate()` |
 | `fallback.py` | `fallback_decision()` |
-| `decide.py` | `decide()`, timeout, `ollama_generate()` |
+| `decide.py` | `decide()`: timeout, validate, fallback |
 
 ## Tests
 
