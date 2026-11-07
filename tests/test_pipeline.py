@@ -8,7 +8,7 @@ from llm import ChatResult, DecisionAgent, LLMError
 from pipeline import run_cycle
 from prompt_assembly import SOLVED_EXAMPLES
 
-RESERVE = SOLVED_EXAMPLES[4]  # plan section 5, 15:00: 3.5 of 6 MWh by 18:00
+RESERVE = next(ex for ex in SOLVED_EXAMPLES if ex["goal_config"])  # plan section 5, 15:00: 3.5 of 6 MWh by 18:00
 FEATURES = RESERVE["features"]
 GOALS = parse_goals("I want to maximise profit. Store 6 MWh by 18:00. Never sell below 50 EUR/MWh").config
 
