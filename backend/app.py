@@ -6,10 +6,23 @@
     POST   /api/goals {text}    {goals, question?}
     DELETE /api/goals/{id}
     GET    /api/metrics         Metrics
-    GET    /api/stream          SSE, event "cycle" = one Interval
+    GET    /api/stream          SSE, event "cycle" = one Interval, event "alert" = one Alert just raised
     POST   /api/sim/run {speed} speed 0 pauses
     POST   /api/sim/reset       back to 00:00
     GET    /api/health
+
+The operator's desk (backend/desk.py):
+
+    GET    /api/alerts                    Alert[], what needs attention now
+    POST   /api/alerts/{id}/ignore        hide it until its condition clears
+    POST   /api/goals/{id}/relax          lower a reserve goal to what is still reachable
+    GET    /api/upcoming?n=8              {now, slots}: the next intervals' planned action
+    PUT    /api/overrides/{time} {battery_fraction, note}   set an upcoming interval (0 = hold)
+    DELETE /api/overrides/{time}          give it back to the AI
+    GET    /api/flags                     DecisionFlag[]
+    POST   /api/decisions/{time}/flag {reason}
+    DELETE /api/decisions/{time}/flag
+    GET    /api/audit?limit=200           AuditEntry[], latest first
 """
 from __future__ import annotations
 
@@ -17,14 +30,15 @@ import asyncio
 import json
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .service import Backend, GoalNotFound
+from .service import Backend, Conflict, GoalNotFound, NotFound
 
 MAX_GOAL_TEXT = 2000
+MAX_NOTE = 500
 
 
 class GoalIn(BaseModel):
@@ -33,6 +47,25 @@ class GoalIn(BaseModel):
 
 class RunIn(BaseModel):
     speed: float = Field(default=60, ge=0, le=100_000)
+
+
+class OverrideIn(BaseModel):
+    battery_fraction: float = Field(ge=-1, le=1)
+    note: str = Field(default="", max_length=MAX_NOTE)
+
+
+class FlagIn(BaseModel):
+    reason: str = Field(default="", max_length=MAX_NOTE)
+
+
+def _desk(fn, *args):
+    """Run a desk command, turning its errors into HTTP ones."""
+    try:
+        return fn(*args)
+    except (NotFound, GoalNotFound) as exc:
+        raise HTTPException(404, f"{exc.args[0]!r} not found" if exc.args else "not found")
+    except Conflict as exc:
+        raise HTTPException(409, str(exc))
 
 
 def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
@@ -84,30 +117,83 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
     def sim_reset() -> dict:
         return backend.reset()
 
+    # ------------------------------------------------------------ operator desk
+
+    @app.get("/api/alerts")
+    def alerts() -> list:
+        return backend.alert_list()
+
+    @app.post("/api/alerts/{alert_id}/ignore")
+    def ignore_alert(alert_id: str) -> dict:
+        _desk(backend.ignore_alert, alert_id)
+        return {"ok": True}
+
+    @app.post("/api/goals/{goal_id}/relax")
+    def relax_goal(goal_id: str) -> dict:
+        return _desk(backend.relax_goal, goal_id)
+
+    @app.get("/api/upcoming")
+    def upcoming(n: int = Query(default=8, ge=1, le=96)) -> dict:
+        return backend.upcoming(n)
+
+    @app.put("/api/overrides/{time}")
+    def set_override(time: str, body: OverrideIn) -> dict:
+        return _desk(backend.set_override, time, body.battery_fraction, body.note)
+
+    @app.delete("/api/overrides/{time}")
+    def clear_override(time: str) -> dict:
+        _desk(backend.clear_override, time)
+        return {"ok": True}
+
+    @app.get("/api/flags")
+    def flags() -> list:
+        return backend.flag_list()
+
+    @app.post("/api/decisions/{time}/flag")
+    def flag(time: str, body: FlagIn) -> dict:
+        return _desk(backend.flag_decision, time, body.reason.strip())
+
+    @app.delete("/api/decisions/{time}/flag")
+    def unflag(time: str) -> dict:
+        _desk(backend.unflag_decision, time)
+        return {"ok": True}
+
+    @app.get("/api/audit")
+    def audit(limit: int = Query(default=200, ge=1, le=500)) -> list:
+        return backend.audit_list(limit)
+
+    # ------------------------------------------------------------------- stream
+
     @app.get("/api/stream")
     async def stream(request: Request) -> StreamingResponse:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=200)
 
-        def on_interval(interval: dict) -> None:          # called from the worker thread
-            def put() -> None:
-                if not queue.full():                      # a slow client must not hold memory
-                    queue.put_nowait(interval)
-            loop.call_soon_threadsafe(put)
+        def listener(event: str):
+            def on_event(payload: dict) -> None:          # called from the worker thread
+                def put() -> None:
+                    if not queue.full():                  # a slow client must not hold memory
+                        queue.put_nowait((event, payload))
+                loop.call_soon_threadsafe(put)
+            return on_event
+
+        on_interval, on_alert = listener("cycle"), listener("alert")
 
         async def events() -> AsyncIterator[str]:
             backend.add_listener(on_interval)
+            backend.add_alert_listener(on_alert)
             try:
                 yield "retry: 3000\n\n"                   # browser reconnect delay
                 while not await request.is_disconnected():
                     try:
-                        interval = await asyncio.wait_for(queue.get(), timeout=heartbeat_s)
+                        event, payload = await asyncio.wait_for(queue.get(), timeout=heartbeat_s)
                     except asyncio.TimeoutError:
                         yield ": ping\n\n"                # keeps proxies from closing the connection
                         continue
-                    yield f"event: cycle\ndata: {json.dumps(interval, ensure_ascii=False)}\n\n"
+                    yield f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             finally:
                 backend.remove_listener(on_interval)
+                backend.remove_alert_listener(on_alert)
 
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

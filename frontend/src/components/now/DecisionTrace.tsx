@@ -24,6 +24,7 @@ function buildSteps(iv: Interval, goals: Goal[], maxPowerMw: number): Step[] {
   const net = iv.production_mw - iv.demand_mw;
   const proposed = iv.decision.battery_fraction * maxPowerMw;
   const llm = iv.decision.source === "llm";
+  const operator = iv.decision.source === "operator";
   const notes = rulesText(iv.guard.applied_rules, goals);
   const sp = iv.guard.battery_setpoint_mw;
 
@@ -33,12 +34,16 @@ function buildSteps(iv: Interval, goals: Goal[], maxPowerMw: number): Step[] {
       result: fmtPrice(iv.price_eur_mwh),
       detail: `break-even €${iv.break_even.toFixed(0)} · ${net >= 0 ? `${fmtMw(net)} spare` : `${fmtMw(-net)} short`}`,
     },
-    llm
-      ? { name: "AI proposal", result: phrase(proposed), detail: confidenceLabel[iv.decision.confidence].toLowerCase() }
-      : { name: "AI proposal", result: "no usable answer", detail: iv.decision.fallback_reason?.replace(/_/g, " ") ?? undefined, intervened: true },
-    llm
-      ? { name: "Check", result: "answer accepted", detail: "valid and within limits" }
-      : { name: "Backup rules", result: phrase(proposed), detail: fallbackReasonText(iv.decision)?.split(",")[0] ?? undefined, intervened: true },
+    operator
+      ? { name: "AI proposal", result: "not asked", detail: "you set this interval ahead of time" }
+      : llm
+        ? { name: "AI proposal", result: phrase(proposed), detail: confidenceLabel[iv.decision.confidence].toLowerCase() }
+        : { name: "AI proposal", result: "no usable answer", detail: iv.decision.fallback_reason?.replace(/_/g, " ") ?? undefined, intervened: true },
+    operator
+      ? { name: "Operator override", result: phrase(proposed), detail: "set on the Day tab", intervened: true }
+      : llm
+        ? { name: "Check", result: "answer accepted", detail: "valid and within limits" }
+        : { name: "Backup rules", result: phrase(proposed), detail: fallbackReasonText(iv.decision)?.split(",")[0] ?? undefined, intervened: true },
     iv.guard.clipped
       ? {
           name: "Safety layer",

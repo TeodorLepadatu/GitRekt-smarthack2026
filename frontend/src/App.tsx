@@ -6,6 +6,9 @@ import { TodayChart } from "@/components/chart/TodayChart";
 import { ApiBanner } from "@/components/common/ApiBanner";
 import { Reveal } from "@/components/common/Reveal";
 import { DemoControls } from "@/components/demo/DemoControls";
+import { AlertsPanel } from "@/components/desk/AlertsPanel";
+import { AuditLog } from "@/components/desk/AuditLog";
+import { UpcomingDecisions } from "@/components/desk/UpcomingDecisions";
 import { GoalsPanel } from "@/components/goals/GoalsPanel";
 import { tabFromHash, TABS, type TabId } from "@/components/layout/tabs";
 import { TopBar } from "@/components/layout/TopBar";
@@ -74,6 +77,7 @@ export default function App() {
         now={state.data?.current?.time ?? null}
         date={day.data?.date ?? null}
       />
+      <AlertsPanel go={go} />
 
       <main key={tab} className="flex flex-col gap-12 px-6 pt-10 pb-28 lg:px-12">
         {tab !== "now" && <PageIntro tab={tab} />}
@@ -86,9 +90,18 @@ export default function App() {
               <MetricsCards kind="energy" />
             </Reveal>
             <Reveal delay={0.1}>
+              <UpcomingDecisions />
+            </Reveal>
+            <Reveal delay={0.1}>
               <TodayChart />
             </Reveal>
           </>
+        )}
+
+        {tab === "log" && (
+          <Reveal>
+            <AuditLog />
+          </Reveal>
         )}
 
         {tab === "goals" && (

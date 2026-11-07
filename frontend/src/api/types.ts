@@ -4,7 +4,8 @@
  * Times are local "HH:MM" strings on 15-minute steps.
  */
 
-export type DecisionSource = "llm" | "fallback";
+/** operator = an override the operator set ahead of time (the guard still checks it). */
+export type DecisionSource = "llm" | "fallback" | "operator";
 export type Confidence = "low" | "medium" | "high";
 
 export interface Decision {
@@ -189,4 +190,106 @@ export interface Metrics {
   peak_import_mw_no_battery?: number;
   /** Intervals whose settled import went over the cap. */
   import_limit_exceeded_intervals?: number;
+}
+
+// --------------------------------------------------------------------------
+// Operator desk (backend/desk.py): alerts, upcoming decisions, flags, audit.
+
+export type AlertKind = "goal_behind" | "goal_unreachable" | "fallback_streak" | "price_spike" | "forecast_error";
+export type AlertSeverity = "critical" | "warning" | "info";
+/** override = go set the upcoming intervals; relax_goal = lower a reserve goal; ignore = hide it. */
+export type AlertAction = "override" | "relax_goal" | "ignore";
+
+/** GET /api/alerts, and the SSE "alert" event when one is raised. */
+export interface Alert {
+  id: string;
+  kind: AlertKind;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  /** Simulated time of the interval that raised it. */
+  time: string | null;
+  /** Wall-clock ISO time. */
+  raised_at: string;
+  goal_id: string | null;
+  actions: AlertAction[];
+}
+
+/** An action the operator set for an interval that has not run yet. */
+export interface Override {
+  time: string;
+  /** −1 full discharge … 0 hold … 1 full charge. */
+  battery_fraction: number;
+  note: string;
+  set_at: string;
+}
+
+export interface PlannedAction {
+  battery_fraction: number;
+  /** After the safety checks, on the forecast. */
+  setpoint_mw: number;
+  explanation: string;
+}
+
+export interface UpcomingOverride {
+  time: string;
+  battery_fraction: number;
+  note: string;
+  set_at: string;
+  setpoint_mw: number;
+  /** The safety layer will not let the override run as set. */
+  limited_by_safety: boolean;
+}
+
+export interface UpcomingSlot {
+  time: string;
+  price_eur_mwh: number;
+  stored_before_mwh: number;
+  /** Preview by the backup rules on the forecast; the AI decides when the interval comes. */
+  planned: PlannedAction;
+  override: UpcomingOverride | null;
+}
+
+/** GET /api/upcoming */
+export interface UpcomingResponse {
+  now: string | null;
+  slots: UpcomingSlot[];
+}
+
+/** GET /api/flags: decisions the operator disagreed with. */
+export interface DecisionFlag {
+  time: string;
+  reason: string;
+  flagged_at: string;
+}
+
+export type AuditAction =
+  | "goal_added"
+  | "goal_removed"
+  | "goal_relaxed"
+  | "override_set"
+  | "override_cleared"
+  | "alert_ignored"
+  | "decision_flagged"
+  | "decision_unflagged"
+  | "sim_speed"
+  | "sim_reset";
+
+/** GET /api/audit, latest first. */
+export interface AuditEntry {
+  id: string;
+  /** Wall-clock ISO time. */
+  at: string;
+  date: string;
+  /** Latest decided interval when it happened. */
+  sim_time: string | null;
+  action: AuditAction;
+  summary: string;
+  detail: Record<string, unknown>;
+}
+
+/** POST /api/goals/{id}/relax */
+export interface RelaxGoalResponse {
+  goals: Goal[];
+  message: string;
 }

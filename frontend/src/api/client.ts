@@ -1,4 +1,17 @@
-import type { AddGoalResponse, DayResponse, Goal, Interval, Metrics, StateSnapshot } from "./types";
+import type {
+  AddGoalResponse,
+  Alert,
+  AuditEntry,
+  DayResponse,
+  DecisionFlag,
+  Goal,
+  Interval,
+  Metrics,
+  Override,
+  RelaxGoalResponse,
+  StateSnapshot,
+  UpcomingResponse,
+} from "./types";
 
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === "true";
 
@@ -56,22 +69,42 @@ export const api = {
   metrics: () => request<Metrics>("GET", "/api/metrics"),
   simRun: (speed: number) => request<unknown>("POST", "/api/sim/run", { speed }),
   simReset: () => request<unknown>("POST", "/api/sim/reset"),
+
+  // operator desk
+  alerts: () => request<Alert[]>("GET", "/api/alerts"),
+  ignoreAlert: (id: string) => request<unknown>("POST", `/api/alerts/${encodeURIComponent(id)}/ignore`),
+  relaxGoal: (id: string) => request<RelaxGoalResponse>("POST", `/api/goals/${encodeURIComponent(id)}/relax`),
+  upcoming: (n = 8) => request<UpcomingResponse>("GET", `/api/upcoming?n=${n}`),
+  setOverride: (time: string, battery_fraction: number, note = "") =>
+    request<Override>("PUT", `/api/overrides/${encodeURIComponent(time)}`, { battery_fraction, note }),
+  clearOverride: (time: string) => request<unknown>("DELETE", `/api/overrides/${encodeURIComponent(time)}`),
+  flags: () => request<DecisionFlag[]>("GET", "/api/flags"),
+  flag: (time: string, reason: string) => request<DecisionFlag>("POST", `/api/decisions/${encodeURIComponent(time)}/flag`, { reason }),
+  unflag: (time: string) => request<unknown>("DELETE", `/api/decisions/${encodeURIComponent(time)}/flag`),
+  audit: (limit = 200) => request<AuditEntry[]>("GET", `/api/audit?limit=${limit}`),
 };
 
 export type StreamStatus = "connecting" | "live" | "down";
 
 /**
- * Subscribe to the "cycle" SSE stream. Returns an unsubscribe function.
- * EventSource reconnects by itself; onStatus reports the connection state.
+ * Subscribe to the SSE stream: "cycle" (one Interval) and "alert" (one Alert just raised).
+ * Returns an unsubscribe function. EventSource reconnects by itself; onStatus reports the connection state.
  */
-export function subscribeCycles(onCycle: (iv: Interval) => void, onStatus: (s: StreamStatus) => void): () => void {
+export function subscribeCycles(
+  onCycle: (iv: Interval) => void,
+  onStatus: (s: StreamStatus) => void,
+  onAlert: (a: Alert) => void = () => {},
+): () => void {
   if (USE_MOCKS) {
     let unsub: (() => void) | null = null;
     let cancelled = false;
     import("@/mocks/server").then(({ mockBackend }) => {
       if (cancelled) return;
       onStatus("live");
-      const off = mockBackend.subscribe((iv) => onCycle(structuredClone(iv)));
+      const off = mockBackend.subscribe(
+        (iv) => onCycle(structuredClone(iv)),
+        (a) => onAlert(structuredClone(a)),
+      );
       unsub = () => void off();
     });
     return () => {
@@ -86,6 +119,13 @@ export function subscribeCycles(onCycle: (iv: Interval) => void, onStatus: (s: S
   es.addEventListener("cycle", (ev) => {
     try {
       onCycle(JSON.parse((ev as MessageEvent).data) as Interval);
+    } catch {
+      /* ignore malformed event */
+    }
+  });
+  es.addEventListener("alert", (ev) => {
+    try {
+      onAlert(JSON.parse((ev as MessageEvent).data) as Alert);
     } catch {
       /* ignore malformed event */
     }

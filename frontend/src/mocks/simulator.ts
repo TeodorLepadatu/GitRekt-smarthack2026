@@ -35,6 +35,8 @@ const LLM_FAILURES: Record<number, string> = {
   27: "bad_json",
   41: "timeout",
   58: "missing_field",
+  59: "llm_error",
+  60: "llm_error", // three in a row: the operator desk raises an alert
   74: "timeout",
   89: "out_of_range",
 };
@@ -270,20 +272,45 @@ function runGuard(dec: Decision, f: ForecastInterval, soc: number, goals: Goal[]
   return guard;
 }
 
-/** Run one 15-minute cycle starting with `soc` stored. */
-export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goal[]): Interval {
+/** An operator override for one interval (see backend/desk.py). */
+export interface MockOverride {
+  battery_fraction: number;
+  note: string;
+}
+
+function operatorDecision(o: MockOverride): Decision {
+  const f = clamp(o.battery_fraction, -1, 1);
+  const action =
+    f > 0 ? `charge at ${Math.round(f * 100)}% of max power` : f < 0 ? `discharge at ${Math.round(-f * 100)}% of max power` : "hold the battery";
+  return {
+    battery_fraction: r2(f),
+    curtail: false,
+    source: "operator",
+    confidence: "high",
+    reasoning: `The operator set this interval ahead of time: ${action}.${o.note ? ` Note: ${o.note}` : ""}`,
+    explanation_for_operator: `Operator override: ${action}.`,
+    fallback_reason: null,
+  };
+}
+
+/** Run one 15-minute cycle starting with `soc` stored. An override skips the "LLM", never the guard. */
+export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goal[], override?: MockOverride | null): Interval {
   const startMin = i * 15;
   const failure = LLM_FAILURES[i];
-  const p = failure ? proposeFallback(f, goals, soc, startMin) : proposeLlm(f, soc, goals, startMin);
-  const decision: Decision = {
-    battery_fraction: r2(p.fraction),
-    curtail: p.curtail,
-    source: failure ? "fallback" : "llm",
-    confidence: p.confidence,
-    reasoning: p.reasoning,
-    explanation_for_operator: p.explanation,
-    fallback_reason: failure ?? null,
-  };
+  let decision: Decision;
+  if (override) decision = operatorDecision(override);
+  else {
+    const p = failure ? proposeFallback(f, goals, soc, startMin) : proposeLlm(f, soc, goals, startMin);
+    decision = {
+      battery_fraction: r2(p.fraction),
+      curtail: p.curtail,
+      source: failure ? "fallback" : "llm",
+      confidence: p.confidence,
+      reasoning: p.reasoning,
+      explanation_for_operator: p.explanation,
+      fallback_reason: failure ?? null,
+    };
+  }
   const guard = runGuard(decision, f, soc, goals, startMin);
   const sp = guard.battery_setpoint_mw;
   return {
@@ -294,5 +321,32 @@ export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goa
     guard,
     // Same math as settlement/settle.py (forecast = actual in the mock).
     settlement: settle(f.price_eur_mwh, f.demand_mw, f.production_mw, sp, guard.curtail_mw),
+  };
+}
+
+/** The backup rules' plan for an interval that has not run yet, as the Day tab previews it. */
+export function previewCycle(i: number, f: ForecastInterval, soc: number, goals: Goal[], override?: MockOverride | null) {
+  const startMin = i * 15;
+  const p = proposeFallback(f, goals, soc, startMin);
+  const planned: Decision = {
+    battery_fraction: r2(p.fraction),
+    curtail: p.curtail,
+    source: "fallback",
+    confidence: "low",
+    reasoning: "",
+    explanation_for_operator: p.explanation.replace(/^Backup rules: /, ""),
+    fallback_reason: "preview",
+  };
+  const plannedGuard = runGuard(planned, f, soc, goals, startMin);
+  const overGuard = override ? runGuard(operatorDecision(override), f, soc, goals, startMin) : null;
+  const sp = (overGuard ?? plannedGuard).battery_setpoint_mw;
+  return {
+    planned: {
+      battery_fraction: planned.battery_fraction,
+      setpoint_mw: plannedGuard.battery_setpoint_mw,
+      explanation: planned.explanation_for_operator.charAt(0).toUpperCase() + planned.explanation_for_operator.slice(1),
+    },
+    override: overGuard ? { setpoint_mw: overGuard.battery_setpoint_mw, limited_by_safety: overGuard.clipped } : null,
+    socAfter: clamp(socAfter(soc, sp), 0, CAPACITY),
   };
 }

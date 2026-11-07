@@ -66,9 +66,27 @@ All types live in [`src/api/types.ts`](src/api/types.ts). The mock layer uses ex
 | `POST /api/goals {text}` | `{goals, question?}`. `question` is set when the goal was too vague to parse |
 | `DELETE /api/goals/:id` | anything (2xx) |
 | `GET /api/metrics` | `Metrics` (profit, MWh sold/bought/curtailed, decision counts by source, goals met) |
-| `GET /api/stream` | SSE, event `cycle`, data = one interval (same shape as a `/api/day` slot) |
+| `GET /api/stream` | SSE, event `cycle`, data = one interval (same shape as a `/api/day` slot); event `alert`, data = one `Alert` just raised |
 | `POST /api/sim/run {speed}` | starts the simulation; **`speed: 0` pauses** |
 | `POST /api/sim/reset` | restarts the day at 00:00 |
+
+### Operator desk
+
+What a person needs to step in (`backend/desk.py`, mocked in `src/mocks/desk.ts`):
+
+| Route | Returns |
+|---|---|
+| `GET /api/alerts` | `Alert[]`: goal behind/unreachable, backup rules 3× in a row, price spike in the next 2 h, forecast off. One alert per condition; it goes away by itself when the condition clears |
+| `POST /api/alerts/:id/ignore` | hides it until its condition clears and comes back |
+| `POST /api/goals/:id/relax` | `{goals, message}`: lowers a reserve goal to what can still be stored by its deadline (409 if nothing useful is left) |
+| `GET /api/upcoming?n=8` | `{now, slots: UpcomingSlot[]}`: the next intervals' planned action (backup rules + guard on the forecast) and any override |
+| `PUT /api/overrides/:time {battery_fraction, note}` | `Override`. `0` = hold ("Skip"). The AI is not asked for that interval; the guard still checks it. 409 if already decided |
+| `DELETE /api/overrides/:time` | gives the interval back to the AI |
+| `GET /api/flags` | `DecisionFlag[]` |
+| `POST /api/decisions/:time/flag {reason}` / `DELETE` | flag or unflag a decision. The full decision and its situation are kept in `logs/decision_flags.jsonl` for later prompt examples |
+| `GET /api/audit?limit=200` | `AuditEntry[]`, latest first: goal changes, overrides, flags, ignored alerts, simulation settings. Kept in `logs/audit.jsonl` |
+
+An overridden interval comes back with `decision.source = "operator"`.
 
 Settled with the backend. `dashboard/contract.py` builds exactly these shapes from the
 loop's objects, and `tests/test_dashboard_contract.py` parses this `types.ts` and checks

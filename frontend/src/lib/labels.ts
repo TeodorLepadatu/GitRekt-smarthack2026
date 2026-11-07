@@ -31,11 +31,12 @@ export const actionShort: Record<ActionKind, string> = {
   hold: "Hold",
 };
 
-export type SourceKind = "ai" | "backup" | "safety";
+export type SourceKind = "ai" | "backup" | "safety" | "operator";
 
 /** Who decided this interval. Safety adjustment wins over the decision source. */
 export function sourceKind(iv: Pick<Interval, "decision" | "guard">): SourceKind {
   if (iv.guard.clipped) return "safety";
+  if (iv.decision.source === "operator") return "operator";
   return iv.decision.source === "fallback" ? "backup" : "ai";
 }
 
@@ -43,13 +44,38 @@ export const sourceLabel: Record<SourceKind, string> = {
   ai: "AI",
   backup: "Backup rules",
   safety: "Adjusted by safety",
+  operator: "Operator",
 };
 
 export const sourceHint: Record<SourceKind, string> = {
   ai: "The AI made this decision and it passed all safety checks.",
   backup: "The AI's answer could not be used, so the backup rules decided.",
   safety: "The safety layer changed the decision to respect battery limits or your goals.",
+  operator: "You set this interval ahead of time. It still passed the safety checks.",
 };
+
+/** Who proposed the action, in a sentence: "AI", "backup rules", "you". */
+export function proposerText(d: Decision): string {
+  return d.source === "llm" ? "AI" : d.source === "operator" ? "you" : "backup rules";
+}
+
+/** Battery fraction (−1 … 1) as an action, e.g. "Charge 60%", "Hold". */
+export function fractionText(f: number): string {
+  if (Math.abs(f) < 0.005) return "Hold";
+  return `${f > 0 ? "Charge" : "Discharge"} ${Math.round(Math.abs(f) * 100)}%`;
+}
+
+export const alertActionLabel = {
+  override: "Set the next intervals",
+  relax_goal: "Relax goal",
+  ignore: "Ignore",
+} as const;
+
+/** "12:30" from a wall-clock ISO string. */
+export function clockTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 export function fallbackReasonText(d: Decision): string | null {
   if (d.source !== "fallback") return null;

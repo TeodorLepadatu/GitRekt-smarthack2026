@@ -37,10 +37,11 @@ from pipeline import CycleResult, run_cycle
 from settlement import DayLedger
 from settlement.settle import ImbalancePrices, scheduled_position_mwh
 from simulator import SiteSimulator
-from validator import fallback_decision
+from validator import Decision, fallback_decision
 from validator.schema import DEFAULT_TIMEOUT_S
 
 REASON_FEATURE_ERROR = "feature_error"  # the feature builder failed; the LLM was not called
+SOURCE_OPERATOR = "operator"            # a human set this interval's action ahead of time
 
 FeatureBuilder = Callable[..., Mapping[str, Any]]
 
@@ -105,6 +106,7 @@ class DayRunner:
         on_interval: Optional[Callable[[dict], None]] = None,
         log_path: Optional[str] = None,
         max_import_mw: Optional[float] = None,
+        override_for: Optional[Callable[[str], Optional[Mapping[str, Any]]]] = None,
     ):
         self.cfg = battery or BatteryConfig()
         self.day = day
@@ -119,6 +121,9 @@ class DayRunner:
         self.feature_builder = feature_builder
         self.timeout_s = timeout_s
         self.on_interval = on_interval
+        # The operator's action for an interval ({"battery_fraction", "note"}), or None.
+        # Asked when the interval starts; an override skips the LLM, never the guard.
+        self.override_for = override_for
         limit = finite_float(max_import_mw)
         if max_import_mw is not None and (limit is None or limit < 0):
             raise LoopError(f"max_import_mw must be a number >= 0, got {max_import_mw!r}")
@@ -251,9 +256,23 @@ class DayRunner:
             decision = fallback_decision(features, REASON_FEATURE_ERROR, str(exc)[:200])
             return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg,
                                                                max_import_mw=self.max_import_mw))
+        override = self._override(t, warnings)
+        if override is not None:
+            decision = operator_decision(override)
+            return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg,
+                                                               max_import_mw=self.max_import_mw))
         return features, run_cycle(features, self.goal_config, llm_call=self.llm_call,
                                    battery=self.cfg, timeout_s=self.timeout_s,
                                    max_import_mw=self.max_import_mw)
+
+    def _override(self, t: str, warnings: list[str]) -> Optional[Mapping[str, Any]]:
+        if self.override_for is None:
+            return None
+        try:
+            return self.override_for(t)
+        except Exception as exc:  # a broken override store must not stop the site
+            warnings.append(f"operator override could not be read ({exc!r}); the AI decided")
+            return None
 
     def _balance(
         self, i: int, cycle: Any, forecast: Any, demand: float, production: float,
@@ -389,6 +408,24 @@ class DayRunner:
         if self.curve.time_at(i) != time:
             raise LoopError(f"{time} is not the start of an interval")
         return i
+
+
+def operator_decision(override: Mapping[str, Any]) -> Decision:
+    """The operator's planned action as a Decision. The guard still checks it."""
+    fraction = finite_float(override.get("battery_fraction")) or 0.0
+    fraction = round(max(-1.0, min(1.0, fraction)), 4)
+    if fraction > 0:
+        action = f"charge at {fraction:.0%} of max power"
+    elif fraction < 0:
+        action = f"discharge at {-fraction:.0%} of max power"
+    else:
+        action = "hold the battery"
+    note = str(override.get("note") or "").strip()
+    return Decision(
+        battery_fraction=fraction, curtail=False, source=SOURCE_OPERATOR, confidence="high",
+        reasoning=f"The operator set this interval ahead of time: {action}." + (f" Note: {note}" if note else ""),
+        explanation_for_operator=f"Operator override: {action}.",
+    )
 
 
 def _forecast_values(forecast: Any) -> tuple[Optional[float], Optional[float]]:

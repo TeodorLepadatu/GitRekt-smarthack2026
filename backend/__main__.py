@@ -43,6 +43,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--start", default="00:00", help="pre-run the day up to this time, HH:MM")
     ap.add_argument("--goals-path", help="where the goals are saved (default: Settings().goals_path)")
     ap.add_argument("--log", help="write every interval record to this JSONL file")
+    ap.add_argument("--operator-log-dir", default="logs",
+                    help="where the audit log and the decision flags are kept (audit.jsonl, decision_flags.jsonl)")
     ap.add_argument("--date", help="run a real day (YYYY-MM-DD) instead of the demo day")
     ap.add_argument("--plan", action="store_true", help="with --date: settle on the forecasts, not the actuals")
     ap.add_argument("--imbalance", action="store_true",
@@ -76,7 +78,7 @@ def main(argv: list[str] | None = None) -> None:
         day_factory = demo_day
 
     backend = Backend(store, llm_call=llm_call, battery=settings.battery, start_soc_mwh=args.start_soc,
-                      day_factory=day_factory, log_path=args.log,
+                      day_factory=day_factory, log_path=args.log, operator_log_dir=args.operator_log_dir or None,
                       max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import)
     if args.date:
         backend.date = args.date

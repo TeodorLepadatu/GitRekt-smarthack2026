@@ -138,7 +138,7 @@ def test_types_ts_was_understood(contract):
     for name in ("Interval", "ForecastInterval", "Decision", "GuardResult", "Settlement",
                  "StateSnapshot", "SimStatus", "Metrics", "Goal", "DayResponse"):
         assert name in contract["interfaces"], f"{name} not parsed out of types.ts"
-    assert contract["aliases"]["DecisionSource"] == ["llm", "fallback"]
+    assert contract["aliases"]["DecisionSource"] == ["llm", "fallback", "operator"]
     assert len(contract["interfaces"]["Interval"]) == 11
 
 

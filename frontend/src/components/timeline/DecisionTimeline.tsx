@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
-import { useDay, useGoals, useStateSnapshot } from "@/api/hooks";
-import { isDecided, type Interval } from "@/api/types";
+import { useDay, useFlags, useGoals, useStateSnapshot } from "@/api/hooks";
+import { isDecided, type DecisionFlag, type Interval } from "@/api/types";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
 import { cn } from "@/lib/utils";
 import { TimelineRow } from "./TimelineRow";
 
-type Filter = "all" | "backup" | "safety";
+type Filter = "all" | "backup" | "safety" | "operator" | "flagged";
 
-const filters: { id: Filter; label: string; test: (iv: Interval) => boolean }[] = [
+const filters: { id: Filter; label: string; test: (iv: Interval, flags: Map<string, DecisionFlag>) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
   { id: "backup", label: "Backup rules", test: (iv) => iv.decision.source === "fallback" },
   { id: "safety", label: "Changed by safety", test: (iv) => iv.guard.clipped },
+  { id: "operator", label: "Set by you", test: (iv) => iv.decision.source === "operator" },
+  { id: "flagged", label: "Flagged", test: (iv, flags) => flags.has(iv.time) },
 ];
 
 const PAGE = 24;
@@ -23,12 +25,15 @@ export function DecisionTimeline() {
   const [open, setOpen] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
 
+  const flagList = useFlags().data;
+  const flags = useMemo(() => new Map((flagList ?? []).map((f) => [f.time, f])), [flagList]);
   const decided = useMemo(() => (day.data?.intervals ?? []).filter(isDecided).reverse(), [day.data]);
   const counts = useMemo(
-    () => Object.fromEntries(filters.map((f) => [f.id, decided.filter(f.test).length])) as Record<Filter, number>,
-    [decided],
+    () => Object.fromEntries(filters.map((f) => [f.id, decided.filter((iv) => f.test(iv, flags)).length])) as Record<Filter, number>,
+    [decided, flags],
   );
-  const rows = decided.filter(filters.find((f) => f.id === filter)!.test);
+  const test = filters.find((f) => f.id === filter)!.test;
+  const rows = decided.filter((iv) => test(iv, flags));
 
   return (
     <div className="flex flex-col gap-3">
@@ -80,6 +85,7 @@ export function DecisionTimeline() {
                   iv={iv}
                   goals={goals.data ?? []}
                   maxPowerMw={maxPowerMw}
+                  flag={flags.get(iv.time) ?? null}
                   open={open === iv.time}
                   onToggle={() => setOpen((o) => (o === iv.time ? null : iv.time))}
                 />

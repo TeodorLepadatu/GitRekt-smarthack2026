@@ -36,7 +36,7 @@ from battery import BatteryConfig
 from common import finite_float, goal_config_dict
 from feature_builder import PriceCurve, SiteForecast, break_even_at
 
-SOURCES = ("llm", "fallback")
+SOURCES = ("llm", "fallback", "operator")  # operator = an override set on the Day tab
 CONFIDENCES = ("low", "medium", "high")
 # settlement/goals.py statuses, which are already the dashboard's GoalStatus union
 STATUSES = ("on_track", "behind", "met", "unreachable", "missed", "violated")

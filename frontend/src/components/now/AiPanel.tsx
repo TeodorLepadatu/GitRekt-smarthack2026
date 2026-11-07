@@ -62,6 +62,14 @@ export function AiPanel({ iv, socBefore, goals, maxPowerMw }: Props) {
               {iv.decision.curtail ? " and switch off surplus output" : ""}, with {confidenceLabel[iv.decision.confidence].toLowerCase()}.
             </p>
           </>
+        ) : iv.decision.source === "operator" ? (
+          <>
+            <p className="font-serif text-2xl leading-snug text-ai">{iv.decision.explanation_for_operator}</p>
+            <p className="mt-4 text-base text-ink-2">
+              You set this quarter-hour ahead of time, so the AI was not asked. The safety layer still checked it against the battery limits and
+              your hard goals.
+            </p>
+          </>
         ) : (
           <>
             <p className="font-serif text-2xl leading-snug text-warn">{fallbackReasonText(iv.decision)}.</p>
