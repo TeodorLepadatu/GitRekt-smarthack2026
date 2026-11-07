@@ -68,6 +68,8 @@ export const goalStatusLabel: Record<GoalStatus, string> = {
   behind: "Behind",
   met: "Met",
   unreachable: "Can't be met",
+  missed: "Missed",
+  violated: "Broken",
 };
 
 /** Text used to quote a goal inside rule messages. */

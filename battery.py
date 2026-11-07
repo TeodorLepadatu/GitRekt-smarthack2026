@@ -23,6 +23,9 @@ class BatteryConfig:
     e_max_mwh: float | None = None  # highest allowed; defaults to capacity
     interval_h: float = 0.25        # 15 minutes
     goal_buffer_min: float = 30.0   # safety buffer for reserve deadlines (plan section 4)
+    # Wear per MWh of throughput (charged or discharged), plan section 5: EUR 2.5.
+    # A full round trip (charge + discharge) costs EUR 5, the wear in the break-even formula.
+    wear_eur_per_mwh: float = 2.5
 
     @property
     def eta_c(self) -> float:

@@ -45,7 +45,7 @@ function energyTiles(d: Metrics) {
       label="Profit today"
       value={`${up ? "+" : ""}${fmtEur(d.profit_today_eur)}`}
       valueClass={up ? "text-ok" : "text-bad"}
-      sub={up ? "Earned from the grid so far" : "Spent on the grid so far"}
+      sub={`${up ? "Earned" : "Spent"} so far, after ${fmtEur(Math.abs(d.wear_eur))} battery wear · ${fmtEur(Math.abs(d.value_added_eur))} ${d.value_added_eur >= 0 ? "more" : "less"} than with no battery`}
     />,
     <Tile key="sold" icon={<ArrowUpFromLine />} iconClass="bg-grid/12 text-grid" label="Energy sold" value={fmtMwh(d.energy_sold_mwh)} sub="Exported to the grid" />,
     <Tile key="bought" icon={<ArrowDownToLine />} iconClass="bg-grid/12 text-grid" label="Energy bought" value={fmtMwh(d.energy_bought_mwh)} sub="Imported from the grid" />,

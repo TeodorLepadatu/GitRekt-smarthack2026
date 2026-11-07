@@ -6,15 +6,15 @@ import type {
   AddGoalResponse,
   DayResponse,
   Goal,
-  GoalStatus,
   Interval,
   Metrics,
   StateSnapshot,
 } from "@/api/types";
-import { INTERVAL_H, indexToTime, timeToIndex } from "@/lib/utils";
+import { INTERVAL_H, indexToTime } from "@/lib/utils";
 import { buildForecast } from "./forecast";
 import { parseGoal } from "./goalParser";
-import { CAPACITY, ETA, P_MAX, runCycle } from "./simulator";
+import { trackGoals } from "./settlement";
+import { CAPACITY, P_MAX, runCycle } from "./simulator";
 
 const START_SOC = 4.0;
 /** Where the demo day starts on page load: just before the noon negative prices. */
@@ -59,46 +59,9 @@ class MockBackend {
 
   // ---- goals ---------------------------------------------------------------
 
-  private goalStatus(g: Omit<Goal, "status">): Goal {
-    const soc = this.soc();
-    const nowMin = this.done.length * 15; // end of the latest interval
-    if (g.type === "max_profit") {
-      return { ...g, status: this.profit() >= 0 ? "on_track" : "behind" };
-    }
-    if (g.type === "min_sell_price") {
-      const broken = this.done.some(
-        (iv) => iv.price_eur_mwh < (g.eur_per_mwh ?? 0) && iv.settlement.grid_export_mwh > 0.001,
-      );
-      const status: GoalStatus = broken ? "behind" : this.done.length >= 96 ? "met" : "on_track";
-      return { ...g, status };
-    }
-    const mwh = g.mwh ?? 0;
-    const byMin = timeToIndex(g.by ?? "24:00") * 15;
-    const hoursLeft = Math.max(0, (byMin - nowMin) / 60);
-    let status: GoalStatus;
-    if (nowMin >= byMin) {
-      // deadline passed: judge on the energy stored at the deadline
-      const at = this.done[Math.min(this.done.length, byMin / 15) - 1];
-      const reached = (at?.soc_mwh ?? soc) >= mwh - 0.01;
-      status = reached ? (soc >= mwh - 0.01 ? "met" : "behind") : "unreachable";
-    } else if (soc >= mwh - 0.01) {
-      status = "met";
-    } else {
-      const possible = ETA * P_MAX * hoursLeft;
-      const need = mwh - soc;
-      status = need > possible ? "unreachable" : need > possible * 0.6 ? "behind" : "on_track";
-    }
-    return {
-      ...g,
-      status,
-      stored_mwh: Math.round(soc * 100) / 100,
-      need_mwh: Math.round(Math.max(0, mwh - soc) * 100) / 100,
-      hours_left: Math.round(hoursLeft * 100) / 100,
-    };
-  }
-
   private listGoals(): Goal[] {
-    return this.goals.map((g) => this.goalStatus(g));
+    // Same rules as settlement/goals.py, replayed over the settled intervals.
+    return trackGoals(this.goals, this.done, this.done.length >= 96, START_SOC);
   }
 
   // ---- metrics ---------------------------------------------------------------
@@ -110,8 +73,13 @@ class MockBackend {
   private metrics(): Metrics {
     const goals = this.listGoals().filter((g) => g.type !== "max_profit");
     const sum = (f: (iv: Interval) => number) => this.done.reduce((s, iv) => s + f(iv), 0);
+    const r2 = (v: number) => Math.round(v * 100) / 100;
     return {
-      profit_today_eur: Math.round(this.profit() * 100) / 100,
+      profit_today_eur: r2(this.profit()),
+      energy_cost_eur: r2(sum((iv) => iv.settlement.energy_cost_eur)),
+      wear_eur: r2(sum((iv) => iv.settlement.wear_eur)),
+      no_battery_profit_eur: r2(sum((iv) => iv.settlement.no_battery_profit_eur)),
+      value_added_eur: r2(sum((iv) => iv.settlement.value_added_eur)),
       energy_sold_mwh: sum((iv) => iv.settlement.grid_export_mwh),
       energy_bought_mwh: sum((iv) => iv.settlement.grid_import_mwh),
       curtailed_mwh: sum((iv) => iv.guard.curtail_mw * INTERVAL_H),
