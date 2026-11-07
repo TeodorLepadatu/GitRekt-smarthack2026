@@ -53,8 +53,17 @@ export const sourceHint: Record<SourceKind, string> = {
 
 export function fallbackReasonText(d: Decision): string | null {
   if (d.source !== "fallback") return null;
-  if (d.fallback_reason === "timeout") return "AI took too long, backup rules decided";
-  return "AI answer was unusable, backup rules decided";
+  switch (d.fallback_reason) {
+    case "timeout":
+      return "AI took too long, backup rules decided";
+    case "llm_error":
+      return "AI was not reachable, backup rules decided";
+    case "feature_error":
+    case "prompt_error":
+      return "Some site data was missing, backup rules decided";
+    default:
+      return "AI answer was unusable, backup rules decided";
+  }
 }
 
 export const confidenceLabel: Record<Confidence, string> = {
