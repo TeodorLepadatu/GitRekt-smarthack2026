@@ -7,10 +7,11 @@ when the goal text changes.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import replace
-from typing import Any, Iterable, Protocol
+from typing import TYPE_CHECKING, Any, Iterable
 
 from .prompt import OUTPUT_SCHEMA, SYSTEM_PROMPT, render_user_message
 from .rules import parse_raw, times_in, unit_amounts
@@ -28,13 +29,12 @@ from .schema import (
     parse_number,
 )
 
+if TYPE_CHECKING:  # only for type hints: the rule parser runs without the llm package
+    from llm.ollama_client import ChatClient
+
 log = logging.getLogger(__name__)
 
 MAX_TEXT_CHARS = 2000  # goals are a few sentences; keeps the prompt well inside num_ctx
-
-
-class JSONChatLLM(Protocol):
-    def chat_json(self, system: str, user: str, schema: dict[str, Any] | None = None) -> Any: ...
 
 
 class MalformedOutput(ValueError):
@@ -44,13 +44,13 @@ class MalformedOutput(ValueError):
 def parse_goals(
     text: str | Iterable[str],
     *,
-    llm: JSONChatLLM | None = None,
+    llm: ChatClient | None = None,
     battery_capacity_mwh: float | None = None,
 ) -> ParseResult:
     """Parse goal sentences into a :class:`ParseResult`.
 
-    ``llm`` is anything with ``chat_json`` (e.g. :class:`OllamaClient`). Without
-    it, or when it fails, the deterministic rule parser is used.
+    ``llm`` is a :class:`llm.ChatClient`, e.g. ``llm.OllamaClient(Settings().goal_model)``.
+    Without it, or when it fails, the deterministic rule parser is used.
 
     When the same goal is stated twice (two minimum prices, or two reserves for
     the same window), the later statement wins, so "Never sell below 50.
@@ -66,7 +66,7 @@ def parse_goals(
 
     if llm is not None:
         try:
-            raw = llm.chat_json(SYSTEM_PROMPT, render_user_message(text), OUTPUT_SCHEMA)
+            raw = _ask_llm(llm, text)
             _check_llm_output(raw, text)
             return _interpret(raw, capacity_mwh=battery_capacity_mwh, source="llm")
         except MalformedOutput as e:
@@ -87,7 +87,7 @@ class GoalParser:
             result = parser.answer(c, "3 MWh by 19:00")
     """
 
-    def __init__(self, llm: JSONChatLLM | None = None, *, battery_capacity_mwh: float | None = None):
+    def __init__(self, llm: ChatClient | None = None, *, battery_capacity_mwh: float | None = None):
         self.llm = llm
         self.battery_capacity_mwh = battery_capacity_mwh
         self._text: str | None = None
@@ -122,6 +122,15 @@ class GoalParser:
 
 
 # --------------------------------------------------------------------------- #
+
+
+def _ask_llm(llm: ChatClient, text: str) -> Any:
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": render_user_message(text)},
+    ]
+    res = llm.chat_json(messages, OUTPUT_SCHEMA, tag="goal_parser")
+    return json.loads(res.content)
 
 
 def _join(text: str | Iterable[str]) -> str:

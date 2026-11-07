@@ -1,4 +1,3 @@
-import math
 import unittest
 
 from prompt_assembly import (
@@ -12,7 +11,9 @@ from prompt_assembly import (
     render_situation,
     render_user_goals,
 )
+from prompt_assembly.examples import EXAMPLE_BATTERY
 from prompt_assembly.situation import labels
+from validator import validate
 
 # Plan section 5 example (15:00) as the feature builder sends it.
 FEATURES = {
@@ -33,8 +34,9 @@ GOALS = {
     ],
 }
 
-# Plan battery: 10 MWh, 3 MW, round trip 0.90, minimum 1 MWh in the examples, wear EUR 5.
-P_MAX, CAPACITY, E_MIN, ETA, DT = 3.0, 10.0, 1.0, math.sqrt(0.90), 0.25
+# The shared battery (battery.BatteryConfig): 10 MWh, 3 MW, round trip 0.90, minimum 1 MWh. Wear EUR 5.
+B = EXAMPLE_BATTERY
+P_MAX, ETA = B.p_max_mw, B.eta_c
 
 
 class PromptTest(unittest.TestCase):
@@ -83,6 +85,14 @@ class PromptTest(unittest.TestCase):
         text = render_user_goals(config, {**FEATURES, "goals": []})
         self.assertIn("use own energy first", text)
         self.assertIn("[HARD] Keep at least 2 MWh from 22:00 until 06:00 -> status: NOT COMPUTED", text)
+
+    def test_goal_parser_object_and_its_dict_give_the_same_prompt(self):
+        from goal_parser import parse_goals
+        config = parse_goals("Store 6 MWh by 18:00. Never sell below 50 EUR/MWh").config
+        prompt = render_prompt(FEATURES, config)
+        self.assertEqual(prompt, render_prompt(FEATURES, config.to_dict()))
+        self.assertIn("Store 6 MWh by 18:00", prompt)
+        self.assertIn("Never sell below EUR 50/MWh", prompt)
 
     def test_user_text_never_reaches_the_prompt(self):
         sneaky = {"objective": "max_profit", "goals": [
@@ -256,9 +266,10 @@ class SolvedExamplesTest(unittest.TestCase):
                 self.assertEqual(f["break_even"], 0.9 * f["future_max_price"] - 5)
                 diff = f["price_now"] - f["break_even"]
                 self.assertEqual(f["price_vs_breakeven"], f"EUR {abs(diff):g} {'ABOVE' if diff > 0 else 'BELOW'}")
-                # plan section 6, fix 1: limits on a 15-minute basis
-                self.assertAlmostEqual(f["max_charge_mw"], round(min(P_MAX, (CAPACITY - f["stored_mwh"]) / (ETA * DT)), 2))
-                self.assertAlmostEqual(f["max_discharge_mw"], round(min(P_MAX, (f["stored_mwh"] - E_MIN) * ETA / DT), 2))
+                # plan section 6, fix 1: limits on a 15-minute basis, from the shared BatteryConfig
+                self.assertEqual((f["min_soc_mwh"], f["capacity_mwh"]), (B.e_min_mwh, B.capacity_mwh))
+                self.assertAlmostEqual(f["max_charge_mw"], round(B.max_charge_mw(f["stored_mwh"]), 2))
+                self.assertAlmostEqual(f["max_discharge_mw"], round(B.max_discharge_mw(f["stored_mwh"]), 2))
                 self.assertAlmostEqual(f["max_charge_fraction"], round(f["max_charge_mw"] / P_MAX, 2))
                 self.assertAlmostEqual(f["max_discharge_fraction"], round(f["max_discharge_mw"] / P_MAX, 2))
                 self.assertAlmostEqual(f["matching_fraction"], round(f["net_mw"] / P_MAX, 2))
@@ -288,6 +299,13 @@ class SolvedExamplesTest(unittest.TestCase):
                 r = ex["decision"]["reasoning"]
                 positions = [r.index(f"Step {i}:") for i in range(1, 7)] + [r.index("Curtail:")]
                 self.assertEqual(positions, sorted(positions))
+
+    def test_example_decisions_pass_the_validator(self):
+        for ex in SOLVED_EXAMPLES:
+            with self.subTest(ex["name"]):
+                d = validate(ex["decision"])
+                self.assertEqual(d.battery_fraction, ex["decision"]["battery_fraction"])
+                self.assertEqual(d.warnings, [])
 
     def test_examples_render_like_the_current_situation(self):
         p = render_prompt(FEATURES, GOALS)

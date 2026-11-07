@@ -30,7 +30,8 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
-from .config import BatteryConfig
+from battery import BatteryConfig
+from common import finite_float, goal_config_dict
 
 DAY_MIN = 24 * 60
 
@@ -63,9 +64,9 @@ def in_window(now: int, start: int, end: int) -> bool:
 
 def _num(goal: Mapping[str, Any], *keys: str) -> Optional[float]:
     for key in keys:
-        value = goal.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
+        value = finite_float(goal.get(key))
+        if value is not None:
+            return value
     return None
 
 
@@ -88,8 +89,9 @@ class Bounds:
             self.hi, self.hi_rule = value, rule
 
 
-def hard_goals(goal_config: Optional[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    goals = (goal_config or {}).get("goals") or []
+def hard_goals(goal_config: Any) -> list[Mapping[str, Any]]:
+    """Hard goals from a GoalConfig, its dict, or None."""
+    goals = goal_config_dict(goal_config).get("goals") or []
     if not isinstance(goals, list):
         return []
     return [g for g in goals if isinstance(g, Mapping) and g.get("hard", True) is not False]

@@ -1,10 +1,11 @@
-"""Battery parameters and physical power limits.
+"""Battery parameters and physical power limits: the one battery definition
+shared by the guard, the prompt's solved examples and the settings.
 
-Defaults are the plan's example battery: 10 MWh, 3 MW max, round-trip
-efficiency 0.90 (so eta_charge = eta_discharge = sqrt(0.90) ~= 0.949),
-15-minute intervals.
+Defaults are the plan's example battery: 10 MWh, 3 MW max, minimum stored
+energy 1 MWh, round-trip efficiency 0.90 (so eta_charge = eta_discharge =
+sqrt(0.90) ~= 0.949), 15-minute intervals.
 
-Sign convention (same as validator/): setpoint > 0 = CHARGE, < 0 = DISCHARGE.
+Sign convention: setpoint > 0 = CHARGE, < 0 = DISCHARGE.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ class BatteryConfig:
     capacity_mwh: float = 10.0
     p_max_mw: float = 3.0
     round_trip_eff: float = 0.90
-    e_min_mwh: float = 0.0          # lowest allowed stored energy
+    e_min_mwh: float = 1.0          # lowest allowed stored energy
     e_max_mwh: float | None = None  # highest allowed; defaults to capacity
     interval_h: float = 0.25        # 15 minutes
     goal_buffer_min: float = 30.0   # safety buffer for reserve deadlines (plan section 4)

@@ -44,6 +44,7 @@ SOURCE_FALLBACK = "fallback"
 
 REASON_TIMEOUT = "timeout"
 REASON_LLM_ERROR = "llm_error"
+REASON_PROMPT_ERROR = "prompt_error"  # prompt assembly failed, the LLM was not called
 REASON_EMPTY = "empty_output"
 REASON_BAD_JSON = "bad_json"
 REASON_NOT_OBJECT = "not_a_json_object"

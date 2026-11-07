@@ -5,7 +5,7 @@
     site_input = result.to_dict()                  # battery_setpoint_mw, curtail_mw, applied_rules, ...
 """
 
-from .config import BatteryConfig
+from battery import BatteryConfig
 from .guard import GuardResult, guard
 
 __all__ = ["guard", "GuardResult", "BatteryConfig"]

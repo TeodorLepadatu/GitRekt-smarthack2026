@@ -5,9 +5,10 @@ current situation, so the small LLM can compare numbers as text.
 """
 from __future__ import annotations
 
-import math
 import re
 from typing import Any
+
+from common import finite_float
 
 
 class PromptAssemblyError(ValueError):
@@ -15,9 +16,10 @@ class PromptAssemblyError(ValueError):
 
 
 def num(value: Any, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    out = finite_float(value)
+    if out is None:
         raise PromptAssemblyError(f"{name} must be a finite number, got {value!r}")
-    return float(value)
+    return out
 
 
 _HHMM_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")

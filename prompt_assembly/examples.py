@@ -11,7 +11,7 @@ All example numbers follow the plan's formulas, including its section 6 fixes
     max_charge_mw    = min(3, free / (eta x 0.25 h))
     max_discharge_mw = min(3, (stored - min) x eta / 0.25 h)
     matching         = net / 3
-tests/test_prompt_assembly.py recomputes every one of them. When the feature
+tests/test_prompt_assembly.py recomputes every one of them from battery.BatteryConfig. When the feature
 builder exists, the plan asks to regenerate these situations with its code.
 
 Together the examples cover steps 1 and 3-6, the zones FAR ABOVE, ABOVE and
@@ -23,7 +23,10 @@ from __future__ import annotations
 
 from typing import Any
 
-_BATTERY = {"min_soc_mwh": 1.0, "capacity_mwh": 10.0}
+from battery import BatteryConfig
+
+EXAMPLE_BATTERY = BatteryConfig()  # the plan's example battery
+_BATTERY = {"min_soc_mwh": EXAMPLE_BATTERY.e_min_mwh, "capacity_mwh": EXAMPLE_BATTERY.capacity_mwh}
 
 SOLVED_EXAMPLES: list[dict[str, Any]] = [
     {

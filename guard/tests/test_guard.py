@@ -73,8 +73,8 @@ class TestPhysicalLimits(unittest.TestCase):
         self.assertLessEqual(r.expected_soc_after_mwh, 10.0 + 1e-6)
 
     def test_nearly_empty_battery_limits_discharge(self):
-        r = guard(dec(-1.0), st(stored_mwh=0.2))
-        # 0.2 MWh * 0.949 / 0.25 h = 0.76 MW
+        r = guard(dec(-1.0), st(stored_mwh=1.2))
+        # (1.2 - 1.0 min) MWh * 0.949 / 0.25 h = 0.76 MW
         self.assertAlmostEqual(r.battery_setpoint_mw, -0.7589, places=3)
         self.assertIn("soc_min_limit", r.applied_rules)
         self.assertGreaterEqual(r.expected_soc_after_mwh, -1e-6)
