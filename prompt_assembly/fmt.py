@@ -6,6 +6,7 @@ current situation, so the small LLM can compare numbers as text.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 
@@ -17,6 +18,13 @@ def num(value: Any, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise PromptAssemblyError(f"{name} must be a finite number, got {value!r}")
     return float(value)
+
+
+_HHMM_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+def is_hhmm(value: Any) -> bool:
+    return isinstance(value, str) and bool(_HHMM_RE.match(value))
 
 
 def mw(x: float) -> str:

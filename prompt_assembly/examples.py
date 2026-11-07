@@ -1,4 +1,4 @@
-"""Section 7: the five solved examples.
+"""Section 7: the six solved examples.
 
 Each situation has the same shape as the feature builder's output, and each is
 rendered by the same code as the current situation, so the format always matches.
@@ -14,8 +14,10 @@ All example numbers follow the plan's formulas, including its section 6 fixes
 tests/test_prompt_assembly.py recomputes every one of them. When the feature
 builder exists, the plan asks to regenerate these situations with its code.
 
-Together the examples cover: steps 1, 2, 4, 5 and 6, every price zone except
-NEAR (a plain table lookup), and a curtail check in every example.
+Together the examples cover steps 1 and 3-6, the zones FAR ABOVE, ABOVE and
+BELOW, negative prices with curtailment, and a curtail check in every example.
+The plan has five examples; the ABOVE one was added because qwen3:4b mixed up
+ABOVE with its neighbouring zones until it saw one.
 """
 from __future__ import annotations
 
@@ -39,9 +41,10 @@ SOLVED_EXAMPLES: list[dict[str, Any]] = [
         },
         "goal_config": None,
         "decision": {
-            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 0.87. Step 2: price cheap "
-                         "YES (rank 15) and zone BELOW, so the charge limit 1.00. Step 3: objective profit. No goals, uncertainty LOW, within "
-                         "limits: 1.00. Curtail: surplus left NO, so false.",
+            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 0.87. Step 2: objective profit, "
+                         "no change. Step 3: price cheap YES (rank 15) and zone BELOW, so the charge limit 1.00. Step 4: "
+                         "uncertainty LOW. Step 5: no goals. Step 6: within limits: 1.00. Curtail: surplus left NO, so "
+                         "false.",
             "battery_fraction": 1.0, "curtail": False, "confidence": "high",
             "explanation_for_operator": "Charging at full power while energy is cheap; it is worth more at the 19:30 peak.",
         },
@@ -62,10 +65,33 @@ SOLVED_EXAMPLES: list[dict[str, Any]] = [
         "goal_config": None,
         "decision": {
             "reasoning": "Step 1: zone FAR ABOVE gives the NEGATIVE discharge limit -1.00, even with a SURPLUS: sell "
-                         "the surplus and stored energy now. Price cheap NO. Step 3: objective profit. No goals, "
-                         "uncertainty LOW, within limits: -1.00. Curtail: surplus left NO, so false.",
+                         "now. Step 2: objective profit. Step 3: price cheap NO. Step 4: uncertainty LOW. Step 5: no "
+                         "goals. Step 6: within limits: -1.00. Curtail: surplus left NO, so false.",
             "battery_fraction": -1.0, "curtail": False, "confidence": "high",
             "explanation_for_operator": "Selling stored energy at full power during the evening price peak.",
+        },
+    },
+    {
+        "name": "evening deficit, price just above break-even (zone ABOVE; the plan's example 2 numbers)",
+        "features": {
+            "time": "18:30", "demand_mw": 5.0, "production_mw": 3.2, "net_mw": -1.8, "net_label": "DEFICIT",
+            "prod_low_mw": 2.9, "prod_high_mw": 3.5, "uncertainty": "LOW",
+            "price_now": 115, "price_rank": 85, "price_avg": 85,
+            "future_max_price": 120, "future_max_time": "19:00",
+            "break_even": 103, "price_vs_breakeven": "EUR 12 ABOVE",
+            "stored_mwh": 8.5, **_BATTERY,
+            "max_charge_mw": 3.0, "max_charge_fraction": 1.0,
+            "max_discharge_mw": 3.0, "max_discharge_fraction": 1.0,
+            "matching_fraction": -0.60,
+        },
+        "goal_config": None,
+        "decision": {
+            "reasoning": "Step 1: zone ABOVE (never charge) with a DEFICIT gives the matching fraction -0.60, "
+                         "covering the deficit. Step 2: objective profit. Step 3: price cheap NO. Step 4: "
+                         "uncertainty LOW. Step 5: no goals. Step 6: within limits: -0.60. Curtail: surplus left "
+                         "NO, so false.",
+            "battery_fraction": -0.60, "curtail": False, "confidence": "medium",
+            "explanation_for_operator": "Discharging to cover the site's own demand while the price is above break-even.",
         },
     },
     {
@@ -83,9 +109,10 @@ SOLVED_EXAMPLES: list[dict[str, Any]] = [
         },
         "goal_config": None,
         "decision": {
-            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 2.10. Step 2: price cheap YES "
-                         "(negative), so the charge limit 0.70. Step 3: objective profit. Step 6: 0.70 is the limit: 0.70. Curtail: surplus left YES and "
-                         "price negative YES, so true.",
+            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 2.10. Step 2: objective profit. "
+                         "Step 3: price cheap YES (negative), so the charge limit 0.70. Step 4: uncertainty MEDIUM, no "
+                         "change. Step 5: no goals. Step 6: 0.70 is the limit: 0.70. Curtail: surplus left YES and price "
+                         "negative YES, so true.",
             "battery_fraction": 0.70, "curtail": True, "confidence": "medium",
             "explanation_for_operator": "Battery charging at its limit and extra production curtailed because the price is negative.",
         },
@@ -105,9 +132,10 @@ SOLVED_EXAMPLES: list[dict[str, Any]] = [
         },
         "goal_config": None,
         "decision": {
-            "reasoning": "Step 1: zone BELOW with a DEFICIT gives 0.00, keeping stored energy for later. Step 2: price "
-                         "cheap YES (rank 25) and zone BELOW, so the charge limit 1.00. Step 3: objective profit. Step 5: uncertainty HIGH, so "
-                         "1.00 becomes 0.50. Within limits: 0.50. Curtail: surplus left NO, so false.",
+            "reasoning": "Step 1: zone BELOW with a DEFICIT gives 0.00 (keep stored energy). Step 2: objective profit. "
+                         "Step 3: price cheap YES (rank 25) and zone BELOW, so the charge limit 1.00. Step 4: "
+                         "uncertainty HIGH, so 1.00 becomes 0.50. Step 5: no goals. Step 6: within limits: 0.50. "
+                         "Curtail: surplus left NO, so false.",
             "battery_fraction": 0.50, "curtail": False, "confidence": "low",
             "explanation_for_operator": "Charging at half power while night energy is cheap; the wind forecast is uncertain.",
         },
@@ -132,9 +160,10 @@ SOLVED_EXAMPLES: list[dict[str, Any]] = [
             "goals": [{"id": "g1", "type": "reserve", "mwh": 6.0, "by": "18:00", "until": "18:00", "hard": True}],
         },
         "decision": {
-            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 0.13. Price cheap NO (rank 70). "
-                         "Step 3: objective profit. Step 4: the 6 MWh goal needs battery_fraction >= 0.29, so 0.29. Uncertainty LOW, within "
-                         "limits: 0.29. Curtail: surplus left NO, so false.",
+            "reasoning": "Step 1: zone BELOW with a SURPLUS gives the matching fraction 0.13. Step 2: objective profit. "
+                         "Step 3: price cheap NO (rank 70). Step 4: uncertainty LOW. Step 5: the 6 MWh goal needs "
+                         "battery_fraction >= 0.29, so 0.29. Step 6: within limits: 0.29. Curtail: surplus left NO, so "
+                         "false.",
             "battery_fraction": 0.29, "curtail": False, "confidence": "medium",
             "explanation_for_operator": "Charging at the goal pace to reach 6 MWh by 18:00.",
         },

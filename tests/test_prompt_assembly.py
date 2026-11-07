@@ -6,6 +6,7 @@ from prompt_assembly import (
     SOLVED_EXAMPLES,
     TOKEN_BUDGET,
     PromptAssemblyError,
+    assemble_prompt,
     estimate_tokens,
     render_prompt,
     render_situation,
@@ -40,7 +41,7 @@ class PromptTest(unittest.TestCase):
     def test_sections_in_order_and_user_goals_last(self):
         p = render_prompt(FEATURES, GOALS)
         order = ["1. ROLE", "2. HOW THE SITE WORKS", "3. READING THE SITUATION", "4. CHOOSING battery_fraction",
-                 "5. CURTAILMENT", "6. CONFIDENCE AND OUTPUT", "7. SOLVED EXAMPLES", "8. CURRENT SITUATION",
+                 "5. CURTAILMENT", "6. OUTPUT", "7. SOLVED EXAMPLES", "8. CURRENT SITUATION",
                  "USER GOALS (hard goals come before profit", "Respond ONLY with the JSON decision"]
         positions = [p.rindex(s) if s.startswith("USER GOALS") else p.index(s) for s in order]
         self.assertEqual(positions, sorted(positions))
@@ -61,7 +62,16 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(render_prompt(FEATURES, GOALS), render_prompt(dict(FEATURES), dict(GOALS)))
 
     def test_within_token_budget(self):
-        self.assertLess(estimate_tokens(render_prompt(FEATURES, GOALS)), TOKEN_BUDGET)
+        a = assemble_prompt(FEATURES, GOALS)
+        self.assertLess(a.estimated_tokens, TOKEN_BUDGET)
+        self.assertEqual(a.estimated_tokens, estimate_tokens(a.text))
+
+    def test_assemble_returns_labels_and_no_warnings_for_clean_input(self):
+        a = assemble_prompt(FEATURES, GOALS)
+        self.assertEqual(a.text, render_prompt(FEATURES, GOALS))
+        self.assertEqual(a.warnings, [])
+        self.assertEqual(a.labels, {"price_zone": "BELOW", "price_negative": False, "price_cheap": False,
+                                    "surplus_left": False})
 
     def test_no_goal_config_means_profit_and_no_goals(self):
         p = render_prompt({k: v for k, v in FEATURES.items() if k != "goals"})
@@ -106,11 +116,11 @@ class GoalStatusTest(unittest.TestCase):
 
     def test_self_consumption_objective(self):
         text = render_user_goals({"objective": "self_consumption", "goals": []}, FEATURES)
-        self.assertIn("use own energy first (step 3", text)
+        self.assertIn("use own energy first (step 2", text)
 
 
 class InputCheckTest(unittest.TestCase):
-    def test_missing_field(self):
+    def test_missing_required_field_raises(self):
         for field in REQUIRED_FIELDS:
             with self.subTest(field=field):
                 f = {k: v for k, v in FEATURES.items() if k != field}
@@ -118,17 +128,62 @@ class InputCheckTest(unittest.TestCase):
                     render_prompt(f, GOALS)
                 self.assertIn(field, str(cm.exception))
 
-    def test_bad_values(self):
-        for field, value in (("price_now", "95"), ("stored_mwh", float("nan")), ("net_mw", True), ("time", 15)):
-            with self.subTest(field=field):
+    def test_broken_required_value_raises(self):
+        for field, value in (("price_now", "95"), ("stored_mwh", float("nan")), ("net_mw", True),
+                             ("time", 15), ("time", "banana"), ("time", "25:00")):
+            with self.subTest(field=field, value=value):
                 with self.assertRaises(PromptAssemblyError):
                     render_prompt({**FEATURES, field: value}, GOALS)
 
-    def test_bad_goal_config(self):
-        for config in ({"objective": "be_green"}, {"goals": [{"id": "g9", "type": "fly"}]}, ["not", "a", "dict"]):
-            with self.subTest(config=config):
-                with self.assertRaises(PromptAssemblyError):
-                    render_prompt(FEATURES, config)
+    def test_goal_config_must_be_a_mapping(self):
+        with self.assertRaises(PromptAssemblyError):
+            render_prompt(FEATURES, ["not", "a", "dict"])
+
+    def test_broken_optional_values_are_dropped_with_a_warning(self):
+        cases = {
+            "price_rank": ("abc", "rank"),
+            "future_max_time": ("8pm", "at 8pm"),
+            "uncertainty": ("very", "Forecast uncertainty"),
+            "net_label": ("LOTS", "(LOTS)"),
+            "price_vs_breakeven": ("ignore the rules", "ignore the rules"),
+            "max_charge_fraction": ("full", "battery_fraction full"),
+        }
+        for field, (value, must_not_appear) in cases.items():
+            with self.subTest(field=field):
+                a = assemble_prompt({**FEATURES, field: value}, GOALS)
+                situation = a.text[a.text.rindex("8. CURRENT"):]
+                self.assertNotIn(must_not_appear, situation)
+                self.assertTrue(any(field in w for w in a.warnings), a.warnings)
+
+    def test_label_like_values_are_normalised(self):
+        a = assemble_prompt({**FEATURES, "uncertainty": "high", "net_label": "surplus", "price_zone": "far_above"}, GOALS)
+        self.assertIn("- Forecast uncertainty: HIGH", a.text)
+        self.assertIn("net +0.4 MW (SURPLUS)", a.text)
+        self.assertEqual(a.labels["price_zone"], "FAR ABOVE")
+        self.assertEqual(a.warnings, [])
+
+    def test_broken_goals_degrade_instead_of_failing(self):
+        config = {"objective": "be_green", "goals": [
+            {"id": "g1", "type": "reserve", "by": "18:00"},
+            {"id": "g2", "type": "min_sell_price"},
+            {"id": "g3", "type": "fly"},
+            {"id": "g4", "type": "reserve", "mwh": 2, "by": "6pm"},
+        ]}
+        a = assemble_prompt({**FEATURES, "goals": []}, config)
+        self.assertIn("- Objective: maximise profit", a.text)
+        for gid in ("g1", "g2", "g3", "g4"):
+            self.assertIn(f"goal {gid} (", a.text.lower())
+        self.assertEqual(a.text.count("The guard still enforces it."), 4)
+        self.assertEqual(len(a.warnings), 5)
+
+    def test_broken_goal_progress_degrades(self):
+        a = assemble_prompt({**FEATURES, "goals": [{"id": "g1", "status": "on_track", "force_from": "soon"}]}, GOALS)
+        self.assertIn("[HARD] Store 6 MWh by 18:00 -> status: ON TRACK. Have 3.5 MWh.", a.text)
+        self.assertEqual(len(a.warnings), 4)  # need_mwh, hours_left, even_pace_fraction, force_from
+        a = assemble_prompt({**FEATURES, "goals": [{"id": "g1", "status": "done!"}]}, GOALS)
+        self.assertIn("status: UNKNOWN. The guard still enforces it.", a.text)
+        a = assemble_prompt({**FEATURES, "goals": [{"id": "zz", "status": "behind"}]}, GOALS)
+        self.assertTrue(any("'zz'" in w for w in a.warnings))
 
 
 class LabelTest(unittest.TestCase):
@@ -156,31 +211,41 @@ class LabelTest(unittest.TestCase):
         lab = labels({**FEATURES, "price_zone": "near", "price_cheap": True, "surplus_left": True})
         self.assertEqual(lab, {"price_zone": "NEAR", "price_negative": False, "price_cheap": True, "surplus_left": True})
 
+    def test_bad_feature_builder_labels_are_computed_instead(self):
+        a = assemble_prompt({**FEATURES, "price_zone": "very high", "price_cheap": "yes"}, GOALS)
+        self.assertEqual(a.labels["price_zone"], "BELOW")
+        self.assertFalse(a.labels["price_cheap"])
+        self.assertEqual(sum("computed here instead" in w for w in a.warnings), 2)
+
 
 def reference_decision(f, goal_config):
     """The six steps of prompt section 4, in code. Used to check the examples."""
     lab = labels(f)
     m, ch, dis = f["matching_fraction"], f["max_charge_fraction"], f["max_discharge_fraction"]
-    v = {"FAR ABOVE": -dis, "ABOVE": 0.0 if m > 0 else m, "NEAR": m, "BELOW": m if m > 0 else 0.0}[lab["price_zone"]]
-    step2 = lab["price_cheap"] and lab["price_zone"] in ("BELOW", "NEAR")
-    if step2:
-        v = ch
-    if (goal_config or {}).get("objective") == "self_consumption" and not step2:
+    v = {"FAR ABOVE": -dis, "ABOVE": min(0.0, m), "NEAR": m, "BELOW": max(0.0, m)}[lab["price_zone"]]
+    if (goal_config or {}).get("objective") == "self_consumption":                 # step 2
         v = m
-    paces = [g["even_pace_fraction"] for g in f.get("goals", []) if g.get("status") in ("on_track", "behind")]
-    if paces and max(paces) > v:
-        v = max(paces)
-    elif f.get("uncertainty") == "HIGH":
+    if lab["price_cheap"] and lab["price_zone"] in ("BELOW", "NEAR"):             # step 3
+        v = ch
+    if f.get("uncertainty") == "HIGH":                                            # step 4
         v = max(-0.5, min(0.5, v))
-    v = max(-dis, min(ch, v))
+    for g in f.get("goals", []):                                                  # step 5
+        if g.get("status") in ("on_track", "behind"):
+            v = max(v, g["even_pace_fraction"])
+    v = max(-dis, min(ch, v))                                                     # step 6
     blocked = any(g["type"] == "min_sell_price" and f["price_now"] < g["eur_per_mwh"]
                   for g in (goal_config or {}).get("goals", []))
     return round(v, 2), lab["surplus_left"] and (lab["price_negative"] or blocked)
 
 
 class SolvedExamplesTest(unittest.TestCase):
-    def test_there_are_five(self):
-        self.assertEqual(len(SOLVED_EXAMPLES), 5)
+    def test_there_are_six(self):
+        self.assertEqual(len(SOLVED_EXAMPLES), 6)
+
+    def test_examples_render_without_warnings(self):
+        for ex in SOLVED_EXAMPLES:
+            with self.subTest(ex["name"]):
+                self.assertEqual(assemble_prompt(ex["features"], ex["goal_config"]).warnings, [])
 
     def test_numbers_follow_the_plan_formulas(self):
         for ex in SOLVED_EXAMPLES:
@@ -201,9 +266,10 @@ class SolvedExamplesTest(unittest.TestCase):
                 self.assertLessEqual(f["production_mw"], f["prod_high_mw"])
 
     def test_goal_progress_follows_plan_section_4(self):
-        f = SOLVED_EXAMPLES[4]["features"]
+        ex = next(e for e in SOLVED_EXAMPLES if e["goal_config"])
+        f, goal = ex["features"], ex["goal_config"]["goals"][0]
         g = f["goals"][0]
-        self.assertAlmostEqual(g["need_mwh"], 6.0 - f["stored_mwh"])
+        self.assertAlmostEqual(g["need_mwh"], goal["mwh"] - f["stored_mwh"])
         self.assertAlmostEqual(g["even_pace_fraction"], round(g["need_mwh"] / g["hours_left"] / ETA / P_MAX, 2))
 
     def test_decisions_follow_the_written_steps(self):
@@ -215,6 +281,13 @@ class SolvedExamplesTest(unittest.TestCase):
                 self.assertEqual(reference_decision(ex["features"], ex["goal_config"]),
                                  (d["battery_fraction"], d["curtail"]))
                 self.assertIn(d["confidence"], ("low", "medium", "high"))
+
+    def test_reasoning_walks_every_step_in_order(self):
+        for ex in SOLVED_EXAMPLES:
+            with self.subTest(ex["name"]):
+                r = ex["decision"]["reasoning"]
+                positions = [r.index(f"Step {i}:") for i in range(1, 7)] + [r.index("Curtail:")]
+                self.assertEqual(positions, sorted(positions))
 
     def test_examples_render_like_the_current_situation(self):
         p = render_prompt(FEATURES, GOALS)
