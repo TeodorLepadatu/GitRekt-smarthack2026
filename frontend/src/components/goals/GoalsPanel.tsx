@@ -1,10 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { Loader2, Lock, MessageCircleQuestion, Send, Sparkles, Sprout } from "lucide-react";
 import { useAddGoal, useDeleteGoal, useGoals } from "@/api/hooks";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { GOAL_EXAMPLES } from "@/lib/labels";
 import { GoalItem } from "./GoalItem";
 
@@ -13,20 +9,18 @@ export function GoalsPanel() {
   const add = useAddGoal();
   const del = useDeleteGoal();
   const [text, setText] = useState("");
-  const [question, setQuestion] = useState<{ asked: string; reply: string } | null>(null);
-  const [added, setAdded] = useState<string | null>(null);
+  const [exchange, setExchange] = useState<{ asked: string; reply: string; ok: boolean } | null>(null);
 
   async function submit(value: string) {
     const t = value.trim();
     if (!t || add.isPending) return;
-    setQuestion(null);
-    setAdded(null);
+    setExchange(null);
     try {
       const res = await add.mutateAsync(t);
-      if (res.question) setQuestion({ asked: t, reply: res.question });
+      if (res.question) setExchange({ asked: t, reply: res.question, ok: false });
       else {
         setText("");
-        setAdded(t);
+        setExchange({ asked: t, reply: "Added. It is checked from the next interval on.", ok: true });
       }
     } catch {
       /* shown below via add.isError */
@@ -39,109 +33,94 @@ export function GoalsPanel() {
   };
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="size-5 text-solar" /> Tell the system what you want
-          </CardTitle>
-          <CardDescription>Write it the way you would say it to a colleague. The system turns it into a rule.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          <form onSubmit={onSubmit} className="flex gap-2">
-            <Input
+    <div className="grid gap-x-14 gap-y-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="flex flex-col gap-6">
+        <form onSubmit={onSubmit} className="flex flex-col gap-2">
+          <label htmlFor="goal-input" className="label">
+            New goal
+          </label>
+          <div className="flex border border-ink bg-sheet focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ink">
+            <input
+              id="goal-input"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="e.g. Store 6 MWh by 18:00"
-              aria-label="Tell the system what you want"
+              placeholder="Store 6 MWh by 18:00"
               maxLength={200}
-              className="h-12 rounded-xl text-base"
+              className="min-w-0 flex-1 bg-transparent px-3 py-3 font-serif text-lg outline-none placeholder:text-ink-3"
             />
-            <Button type="submit" disabled={!text.trim() || add.isPending} className="h-12 rounded-xl px-5" aria-label="Add goal">
-              {add.isPending ? <Loader2 className="animate-spin" /> : <Send />}
-              <span className="hidden sm:inline">Add</span>
-            </Button>
-          </form>
-
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold text-muted-foreground">Or try one of these:</span>
-            <div className="flex flex-wrap gap-2">
-              {GOAL_EXAMPLES.map((ex) => (
+            <button
+              type="submit"
+              disabled={!text.trim() || add.isPending}
+              className="border-l border-ink bg-ink px-5 text-sm font-semibold text-paper disabled:opacity-40"
+            >
+              {add.isPending ? "Adding…" : "Add"}
+            </button>
+          </div>
+          <p className="text-sm text-ink-3">
+            For example:{" "}
+            {GOAL_EXAMPLES.map((ex, i) => (
+              <span key={ex}>
                 <button
-                  key={ex}
                   type="button"
+                  disabled={add.isPending}
                   onClick={() => {
                     setText(ex);
                     void submit(ex);
                   }}
-                  disabled={add.isPending}
-                  className="rounded-full border bg-secondary px-3.5 py-1.5 text-sm font-medium text-secondary-foreground transition-colors hover:border-foreground/30 hover:bg-accent disabled:opacity-50"
+                  className="text-ink-2 underline decoration-rule-strong underline-offset-2 hover:text-ink hover:decoration-ink"
                 >
                   {ex}
                 </button>
-              ))}
-            </div>
-          </div>
+                {i < GOAL_EXAMPLES.length - 1 ? ", " : "."}
+              </span>
+            ))}
+          </p>
+        </form>
 
-          {question && (
-            <div className="flex flex-col gap-2" aria-live="polite">
-              <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-                {question.asked}
-              </div>
-              <div className="flex max-w-[90%] gap-2 rounded-2xl rounded-bl-md border border-info/30 bg-info/10 px-4 py-2.5 text-sm">
-                <MessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-info" />
-                <span>{question.reply}</span>
-              </div>
-            </div>
-          )}
-          {added && (
-            <p className="rounded-xl bg-ok/10 px-4 py-2.5 text-sm text-ok" aria-live="polite">
-              Got it — “{added}” is now an active goal.
+        {exchange && (
+          <div className="flex flex-col gap-2 text-sm" aria-live="polite">
+            <p className="text-ink-3">
+              You wrote: <span className="text-ink">“{exchange.asked}”</span>
             </p>
-          )}
-          {add.isError && <PanelError message="Could not save your goal. Please try again." className="p-3" />}
-
-          <div className="grid gap-3 border-t pt-5 text-sm sm:grid-cols-2">
-            <div className="flex gap-2.5">
-              <Lock className="mt-0.5 size-4 shrink-0 text-foreground" />
-              <p>
-                <b>HARD</b> goals are always kept. The safety layer blocks any decision that would break them.
-              </p>
-            </div>
-            <div className="flex gap-2.5">
-              <Sprout className="mt-0.5 size-4 shrink-0 text-foreground" />
-              <p>
-                <b>SOFT</b> goals are preferences. The AI aims for them but may trade them off for profit.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Active goals</CardTitle>
-          <CardDescription>Live status, updated every 15 minutes.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {goals.isPending ? (
-            <PanelLoading rows={4} />
-          ) : goals.isError && !goals.data ? (
-            <PanelError what="your goals" onRetry={() => goals.refetch()} />
-          ) : goals.data.length === 0 ? (
-            <p className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
-              No goals yet. The system will simply try to make the most money. Add a goal on the left or pick an example.
+            <p className={exchange.ok ? "text-ok" : "font-serif text-lg leading-snug text-ink"}>
+              {!exchange.ok && <span className="label mr-2 align-middle">Question</span>}
+              {exchange.reply}
             </p>
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {goals.data.map((g) => (
-                <GoalItem key={g.id} goal={g} onDelete={(id) => del.mutate(id)} deleting={del.isPending && del.variables === g.id} />
-              ))}
-            </ul>
-          )}
-          {del.isError && <PanelError message="Could not delete the goal. Please try again." className="mt-3 p-3" />}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+        {add.isError && <PanelError message="The goal could not be saved. Try again in a moment." />}
+
+        <dl className="grid gap-4 border-t border-rule pt-4 text-sm">
+          <div>
+            <dt className="font-semibold">Must be kept</dt>
+            <dd className="text-ink-2">
+              Hard goals. The safety layer blocks any decision that would break one, even if the AI proposes it.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold">Preference</dt>
+            <dd className="text-ink-2">Soft goals, written with “try”, “ideally” or “if possible”. The AI aims for them but can trade them off for money.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="flex flex-col">
+        <span className="label mb-1">Active goals</span>
+        {goals.isPending ? (
+          <PanelLoading rows={4} />
+        ) : goals.isError && !goals.data ? (
+          <PanelError what="your goals" onRetry={() => goals.refetch()} />
+        ) : goals.data.length === 0 ? (
+          <p className="py-4 font-serif text-lg text-ink-2">No goals. The battery is run purely for profit until you add one.</p>
+        ) : (
+          <ul>
+            {goals.data.map((g) => (
+              <GoalItem key={g.id} goal={g} onDelete={(id) => del.mutate(id)} deleting={del.isPending && del.variables === g.id} />
+            ))}
+          </ul>
+        )}
+        {del.isError && <PanelError message="The goal could not be removed. Try again in a moment." />}
+      </div>
     </div>
   );
 }

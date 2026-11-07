@@ -15,7 +15,6 @@ import {
 } from "recharts";
 import { useDay, useGoals } from "@/api/hooks";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { buildRows, goalMarkers, negativeRuns, nowX, xTickFormat, xTicks } from "./chartData";
 import { IntervalTooltip, PowerTooltip } from "./ChartTooltip";
@@ -27,7 +26,7 @@ const AXIS_W = 52;
 const statusFill: Record<string, string> = {
   on_track: "var(--ok)",
   behind: "var(--warn)",
-  met: "var(--info)",
+  met: "var(--ink)",
   unreachable: "var(--bad)",
   missed: "var(--bad)",
   violated: "var(--bad)",
@@ -35,12 +34,12 @@ const statusFill: Record<string, string> = {
 
 function Legend({ items }: { items: { label: string; className: string; dashed?: boolean; area?: boolean }[] }) {
   return (
-    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-3">
       {items.map((i) => (
         <li key={i.label} className="flex items-center gap-1.5">
           <span
             className={cn(
-              i.area ? "h-2.5 w-3.5 rounded-sm" : "h-0.5 w-4",
+              i.area ? "h-2.5 w-3.5" : "h-0.5 w-4",
               i.dashed && "border-t-2 border-dashed bg-transparent",
               i.className,
             )}
@@ -54,9 +53,9 @@ function Legend({ items }: { items: { label: string; className: string; dashed?:
 
 function ChartBlock({ title, legend, children }: { title: string; legend: ReactNode; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 pl-1">
-        <h3 className="text-sm font-semibold">{title}</h3>
+    <section className="flex flex-col gap-2 border-t border-rule-strong pt-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-serif text-2xl font-semibold">{title}</h3>
         {legend}
       </div>
       {children}
@@ -79,12 +78,7 @@ export function TodayChart() {
   }, [day.data, goals.data]);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Prices, battery and power</CardTitle>
-        <CardDescription>Every 15 minutes of today. Hover any chart to see that moment on all three.</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <div className="flex flex-col gap-8">
         {day.isPending ? (
           <PanelLoading rows={6} />
         ) : !model ? (
@@ -97,26 +91,26 @@ export function TodayChart() {
                 <Legend
                   items={[
                     { label: "Price", className: "bg-price" },
-                    { label: "Break-even", className: "border-foreground/60", dashed: true },
-                    { label: "Negative price", className: "bg-[var(--negative-zone)] border border-ok/40", area: true },
+                    { label: "Break-even", className: "border-ink-2", dashed: true },
+                    { label: "Price below zero", className: "bg-[var(--negative-zone)] border border-ok/40", area: true },
                   ]}
                 />
               }
             >
-              <div className="h-56">
+              <div className="h-80">
                 <ResponsiveContainer>
                   <ComposedChart data={model.rows} syncId={SYNC} margin={MARGIN}>
                     <CartesianGrid vertical={false} strokeDasharray="0" />
                     <XAxis dataKey="x" type="number" domain={[0, 96]} ticks={xTicks} tickFormatter={xTickFormat} hide />
-                    <YAxis width={AXIS_W} tickLine={false} axisLine={false} fontSize={12} />
+                    <YAxis width={AXIS_W} tickLine={false} axisLine={false} fontSize={14} />
                     {model.neg.map(([a, b]) => (
                       <ReferenceArea key={a} x1={a} x2={b} fill="var(--negative-zone)" stroke="none" ifOverflow="visible" />
                     ))}
-                    <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeOpacity={0.5} />
+                    <ReferenceLine y={0} stroke="var(--ink-3)" strokeOpacity={0.5} />
                     <Line
                       dataKey="breakEven"
                       type="stepAfter"
-                      stroke="var(--foreground)"
+                      stroke="var(--ink)"
                       strokeOpacity={0.55}
                       strokeDasharray="6 4"
                       strokeWidth={1.5}
@@ -130,11 +124,11 @@ export function TodayChart() {
                       stroke="var(--price)"
                       strokeWidth={2}
                       dot={false}
-                      activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
+                      activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--sheet)" }}
                       isAnimationActive={false}
                     />
                     {nowLine(model.now, true)}
-                    <Tooltip content={<IntervalTooltip />} cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }} />
+                    <Tooltip content={<IntervalTooltip />} cursor={{ stroke: "var(--ink-3)", strokeWidth: 1 }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -146,12 +140,12 @@ export function TodayChart() {
                 <Legend
                   items={[
                     { label: "Stored energy", className: "bg-soc", area: true },
-                    { label: "Goal target (colour = status)", className: "bg-ok rounded-full !w-2.5 !h-2.5", area: true },
+                    { label: "Goal target", className: "bg-ink rounded-full !w-2.5 !h-2.5", area: true },
                   ]}
                 />
               }
             >
-              <div className="h-44">
+              <div className="h-64">
                 <ResponsiveContainer>
                   <AreaChart data={model.rows} syncId={SYNC} margin={MARGIN}>
                     <defs>
@@ -162,7 +156,7 @@ export function TodayChart() {
                     </defs>
                     <CartesianGrid vertical={false} />
                     <XAxis dataKey="x" type="number" domain={[0, 96]} ticks={xTicks} tickFormatter={xTickFormat} hide />
-                    <YAxis width={AXIS_W} domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tickLine={false} axisLine={false} fontSize={12} />
+                    <YAxis width={AXIS_W} domain={[0, 10]} ticks={[0, 2, 4, 6, 8, 10]} tickLine={false} axisLine={false} fontSize={14} />
                     <Area
                       dataKey="soc"
                       type="linear"
@@ -171,7 +165,7 @@ export function TodayChart() {
                       fill="url(#socFill)"
                       connectNulls={false}
                       dot={false}
-                      activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
+                      activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--sheet)" }}
                       isAnimationActive={false}
                     />
                     {model.markers.map((m) => (
@@ -181,14 +175,14 @@ export function TodayChart() {
                         y={m.mwh}
                         r={6}
                         fill={statusFill[m.status]}
-                        stroke="var(--card)"
+                        stroke="var(--sheet)"
                         strokeWidth={2}
                         ifOverflow="visible"
-                        label={{ value: m.label, position: "top", fontSize: 11, fill: "var(--foreground)", offset: 9 }}
+                        label={{ value: m.label, position: "top", fontSize: 11, fill: "var(--ink)", offset: 9 }}
                       />
                     ))}
                     {nowLine(model.now)}
-                    <Tooltip content={() => null} cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }} />
+                    <Tooltip content={() => null} cursor={{ stroke: "var(--ink-3)", strokeWidth: 1 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -206,7 +200,7 @@ export function TodayChart() {
                 />
               }
             >
-              <div className="h-44">
+              <div className="h-64">
                 <ResponsiveContainer>
                   <ComposedChart data={model.rows} syncId={SYNC} margin={{ ...MARGIN, bottom: 4 }}>
                     <CartesianGrid vertical={false} />
@@ -217,9 +211,9 @@ export function TodayChart() {
                       ticks={xTicks}
                       tickFormatter={xTickFormat}
                       tickLine={false}
-                      fontSize={12}
+                      fontSize={14}
                     />
-                    <YAxis width={AXIS_W} tickLine={false} axisLine={false} fontSize={12} />
+                    <YAxis width={AXIS_W} tickLine={false} axisLine={false} fontSize={14} />
                     <Area
                       dataKey="wind"
                       stackId="p"
@@ -251,15 +245,15 @@ export function TodayChart() {
                       isAnimationActive={false}
                     />
                     {nowLine(model.now)}
-                    <Tooltip content={<PowerTooltip />} cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }} />
+                    <Tooltip content={<PowerTooltip />} cursor={{ stroke: "var(--ink-3)", strokeWidth: 1 }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </ChartBlock>
           </div>
         )}
-      </CardContent>
-    </Card>
+
+    </div>
   );
 }
 
@@ -269,9 +263,9 @@ function nowLine(x: number | null, label = false) {
   return (
     <ReferenceLine
       x={x}
-      stroke="var(--foreground)"
+      stroke="var(--ink)"
       strokeWidth={1.5}
-      label={label ? { value: `Now ${xTickFormat(x)}`, position: "insideTopRight", fontSize: 12, fill: "var(--foreground)" } : undefined}
+      label={label ? { value: `Now ${xTickFormat(x)}`, position: "insideTopRight", fontSize: 12, fill: "var(--ink)" } : undefined}
     />
   );
 }

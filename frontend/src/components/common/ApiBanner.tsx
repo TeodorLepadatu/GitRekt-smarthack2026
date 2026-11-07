@@ -1,4 +1,3 @@
-import { WifiOff } from "lucide-react";
 import type { StreamStatus } from "@/api/client";
 
 interface Props {
@@ -10,12 +9,11 @@ interface Props {
 export function ApiBanner({ apiDown, stream }: Props) {
   if (!apiDown && stream !== "down") return null;
   const text = apiDown
-    ? "The energy system is not responding. The numbers below may be out of date. Retrying automatically…"
-    : "Live updates paused: lost the connection to the energy system. Reconnecting…";
+    ? "No answer from the energy system. Figures below are from the last successful update; retrying."
+    : "Lost the live connection. Figures update again as soon as it reconnects.";
   return (
-    <div role="alert" className="flex items-center gap-3 bg-bad px-4 py-2.5 text-sm font-medium text-white">
-      <WifiOff className="size-5 shrink-0" />
-      <span>{text}</span>
+    <div role="alert" className="bg-bad px-4 py-2 text-sm font-medium text-paper sm:px-8">
+      {text}
     </div>
   );
 }

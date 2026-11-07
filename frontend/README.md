@@ -4,7 +4,7 @@ The operator dashboard for the energy agent. It shows what the battery is doing 
 whether the goals are on track, today's profit, and who made each decision
 (AI, backup rules, or adjusted by the safety layer). Operators can also type goals in plain language.
 
-React + TypeScript + Vite, Tailwind CSS + shadcn/ui components, Recharts, TanStack Query,
+React + TypeScript + Vite, Tailwind CSS (no component kit, no icon set), Motion for scroll reveals and hover, Recharts, TanStack Query,
 Server-Sent Events for live updates.
 
 ## Run with mock data (no backend needed)
@@ -18,8 +18,8 @@ npm run dev
 Open http://localhost:5173. `.env.development` sets `VITE_USE_MOCKS=true`, so the whole API
 runs in the browser (`src/mocks/`). It simulates one realistic day: 96 intervals with
 negative prices at noon, an evening peak, a few AI failures that the backup rules handle, and
-real safety-layer rules. The demo day starts at 11:15. Use the **Demo** dock in the bottom-right
-corner (Run full day at 1×, 60× or 600×, and Reset) for the live demo.
+real safety-layer rules. The demo day starts at 11:15. Use the **Simulation** strip along the bottom
+(run the rest of the day at 1×, 60× or 600×, or restart at 00:00) for the live demo.
 
 ## Run against the real API
 
@@ -104,14 +104,14 @@ yet, so `VITE_USE_MOCKS=true` is still the only working mode (see `src/mocks/`).
 | `src/api/` | types, fetch client + SSE subscription, TanStack Query hooks |
 | `src/lib/labels.ts` | every plain-language label: actions, sources, goal statuses, guard rules, fallback reasons |
 | `src/mocks/` | forecast, a TypeScript copy of the decide → guard loop, goal parser, mock routes |
-| `src/components/layout/` | top bar and the four tabs (Now · Today · Goals · History, kept in the URL hash) |
-| `src/components/now/` | live energy-flow diagram, current action and reason, the "on track / money / trust" cards |
+| `src/components/layout/` | masthead and the four sections (Now · Day · Goals · Decisions, kept in the URL hash) |
+| `src/components/now/` | current action and reason, power-flow schematic, decision trace (forecast → AI → check → safety → battery), the day-so-far ledger |
 | `src/components/chart/` | today chart: price, battery level, production vs demand (synced hover) |
 | `src/components/goals/` | goal input with examples, active goals, parser questions |
 | `src/components/timeline/` | decision history with filters and expandable AI reasoning |
-| `src/components/metrics/` | profit, energy, AI reliability, goals met |
-| `src/components/demo/` | run / speed / reset controls |
-| `src/components/ui/` | shadcn/ui-style primitives |
+| `src/components/metrics/` | ruled figure rows for the Day and Decisions pages |
+| `src/components/demo/` | simulation strip: run / speed / restart |
+| `src/components/common/marks.tsx` | status words, who-decided marks, progress lines, sections (instead of badges and cards) |
 
 The price and battery level are on separate charts that share the time axis, so there is no dual
 y-axis. The decision history works as the table view of the chart data.

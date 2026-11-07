@@ -1,7 +1,5 @@
-import { Moon, Radio, Sun, Zap } from "lucide-react";
 import type { StreamStatus } from "@/api/client";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, intervalEnd } from "@/lib/utils";
 import { TABS, type TabId } from "./tabs";
 
 interface Props {
@@ -12,64 +10,86 @@ interface Props {
   mocks: boolean;
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  /** Latest decided interval start, e.g. "11:15". */
+  now: string | null;
+  date: string | null;
 }
 
-function TabNav({ tab, onTab, className }: { tab: TabId; onTab: (t: TabId) => void; className?: string }) {
+function fmtDate(iso: string | null) {
+  if (!iso) return "";
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
+/** Sun/moon drawn as a half-filled disc: left half ink in night mode, right half in day mode. */
+function ThemeGlyph({ dark }: { dark: boolean }) {
   return (
-    <nav aria-label="Sections" className={cn("flex gap-1 rounded-2xl border bg-card p-1 shadow-card", className)}>
-      {TABS.map((t) => {
-        const active = t.id === tab;
-        const I = t.icon;
-        return (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onTab(t.id)}
-            aria-current={active ? "page" : undefined}
-            title={t.hint}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors",
-              active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            <I className="size-4" />
-            {t.label}
-          </button>
-        );
-      })}
-    </nav>
+    <svg viewBox="0 0 20 20" className="size-5" aria-hidden>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d={dark ? "M10 2.5 A7.5 7.5 0 0 0 10 17.5 Z" : "M10 2.5 A7.5 7.5 0 0 1 10 17.5 Z"} fill="currentColor" />
+    </svg>
   );
 }
 
-export function TopBar({ tab, onTab, live, stream, mocks, theme, onToggleTheme }: Props) {
+/** Two-part switch: the active side is filled, so the current mode is obvious. */
+export function ThemeButton({ theme, onToggle }: { theme: "light" | "dark"; onToggle: () => void }) {
+  const dark = theme === "dark";
+  const side = (on: boolean) =>
+    cn("flex items-center gap-2 px-4 text-base transition-colors", on ? "bg-ink font-semibold text-paper" : "text-ink-2 hover:text-ink");
   return (
-    <header className="border-b bg-background/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-3">
-          <span className="relative flex size-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <Zap className="size-5 fill-current" />
-            <span className="absolute -right-0.5 -bottom-0.5 size-3.5 rounded-full border-2 border-background bg-solar" />
+    <div role="radiogroup" aria-label="Colours" className="flex h-11 shrink-0 border border-ink">
+      <button type="button" role="radio" aria-checked={!dark} onClick={() => dark && onToggle()} className={side(!dark)}>
+        <ThemeGlyph dark={false} />
+        Day
+      </button>
+      <button type="button" role="radio" aria-checked={dark} onClick={() => !dark && onToggle()} className={cn(side(dark), "border-l border-ink")}>
+        <ThemeGlyph dark />
+        Night
+      </button>
+    </div>
+  );
+}
+
+export function TopBar({ tab, onTab, live, stream, mocks, theme, onToggleTheme, now, date }: Props) {
+  const conn = live ? "connected" : stream === "connecting" ? "connecting" : "no connection";
+  return (
+    <header className="border-b border-rule-strong bg-paper">
+      <div className="flex items-start justify-between gap-6 px-6 pt-6 lg:px-12">
+        <div className="flex flex-col">
+          <span className="font-serif text-4xl leading-none font-semibold tracking-tight">Site energy log</span>
+          <span className="num mt-2.5 text-sm text-ink-3">
+            {fmtDate(date)}
+            {now && (
+              <>
+                {" "}
+                · interval {now}–{intervalEnd(now)}
+              </>
+            )}{" "}
+            · <span className={live ? "text-ink-2" : "text-bad"}>{conn}</span>
+            {mocks && " · simulated day, not live site data"}
           </span>
-          <div className="leading-tight">
-            <h1 className="text-lg font-bold">Site Energy Agent</h1>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className={cn("flex items-center gap-1 font-semibold", live ? "text-ok" : "text-warn")}>
-                <Radio className={cn("size-3.5", live && "animate-pulse")} />
-                {live ? "Live" : stream === "connecting" ? "Connecting…" : "Offline"}
-              </span>
-              · Solar, wind & 10 MWh battery{mocks && " · demo data"}
-            </p>
-          </div>
         </div>
-
-        <TabNav tab={tab} onTab={onTab} className="order-last w-full lg:order-none lg:mx-auto lg:w-auto" />
-
-        <div className="ml-auto flex items-center gap-2 lg:ml-0">
-          <Button variant="outline" size="icon" className="rounded-xl" onClick={onToggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
-            {theme === "dark" ? <Sun /> : <Moon />}
-          </Button>
-        </div>
+        <ThemeButton theme={theme} onToggle={onToggleTheme} />
       </div>
+      <nav aria-label="Sections" className="mt-5 flex gap-8 overflow-x-auto px-6 lg:px-12">
+        {TABS.map((t) => {
+          const active = t.id === tab;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTab(t.id)}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "-mb-px border-b-[3px] pb-3 text-lg whitespace-nowrap transition-colors",
+                active ? "border-ink font-semibold text-ink" : "border-transparent text-ink-3 hover:text-ink",
+              )}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
     </header>
   );
 }

@@ -1,34 +1,7 @@
-import { CheckCircle2, CircleAlert, Clock, ShieldAlert, Trash2, TrendingUp, XCircle } from "lucide-react";
-import type { Goal, GoalStatus } from "@/api/types";
-import { Badge, type BadgeVariant } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { goalProgressText, goalStatusLabel, goalTypeLabel } from "@/lib/labels";
-
-const statusVariant: Record<GoalStatus, BadgeVariant> = {
-  on_track: "ok",
-  behind: "warn",
-  met: "info",
-  unreachable: "bad",
-  missed: "bad",
-  violated: "bad",
-};
-const statusBar: Record<GoalStatus, string> = {
-  on_track: "bg-ok",
-  behind: "bg-warn",
-  met: "bg-info",
-  unreachable: "bg-bad",
-  missed: "bg-bad",
-  violated: "bg-bad",
-};
-const StatusIcon = {
-  on_track: TrendingUp,
-  behind: Clock,
-  met: CheckCircle2,
-  unreachable: XCircle,
-  missed: XCircle,
-  violated: ShieldAlert,
-};
+import type { Goal } from "@/api/types";
+import { GoalStatusWord, ProgressLine } from "@/components/common/marks";
+import { goalProgressText, goalTypeLabel } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 
 interface Props {
   goal: Goal;
@@ -37,60 +10,45 @@ interface Props {
 }
 
 export function GoalItem({ goal, onDelete, deleting }: Props) {
-  const I = StatusIcon[goal.status];
   const progress = goalProgressText(goal);
   const pct = goal.type === "reserve" && goal.mwh ? ((goal.stored_mwh ?? 0) / goal.mwh) * 100 : null;
+  const failed = goal.status === "missed" || goal.status === "violated";
+  // Reserves already show progress; their message adds only the outcome ("6 MWh reached at 12:45").
+  const showMessage = goal.message && (goal.type !== "reserve" || ["met", "missed", "violated"].includes(goal.status));
+
   return (
-    <li className="group flex flex-col gap-2.5 rounded-xl border bg-background/40 p-4">
-      <div className="flex items-start gap-2">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <p className="font-display text-base leading-snug font-semibold">“{goal.source_text}”</p>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant={statusVariant[goal.status]}>
-              <I />
-              {goalStatusLabel[goal.status]}
-            </Badge>
-            <Badge
-              variant="outline"
-              title={goal.hard ? "Must be kept: the safety layer enforces it" : "Preference: the AI tries, but may trade it off"}
-            >
-              {goal.hard ? "HARD" : "SOFT"}
-            </Badge>
-            <span className="text-xs text-muted-foreground">{goalTypeLabel[goal.type]}</span>
-          </div>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`Delete goal "${goal.source_text}"`}
-          title="Delete goal"
-          disabled={deleting}
-          onClick={() => onDelete(goal.id)}
-          className="text-muted-foreground hover:text-bad"
-        >
-          <Trash2 />
-        </Button>
-      </div>
+    <li className={cn("grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5 border-t border-rule py-5 first:border-t-0", deleting && "opacity-50")}>
+      <p className="font-serif text-2xl leading-snug">{goal.source_text}</p>
+      <GoalStatusWord status={goal.status} className="text-lg" />
+
+      <p className="col-span-2 text-sm text-ink-3">
+        {goalTypeLabel[goal.type]} ·{" "}
+        <span title={goal.hard ? "The safety layer will not let any decision break it" : "The AI aims for it but may trade it off for money"}>
+          {goal.hard ? "must be kept" : "preference"}
+        </span>
+        {goal.type === "min_sell_price" && goal.eur_per_mwh != null && <> · nothing is sold below €{goal.eur_per_mwh.toFixed(2)}/MWh</>}
+      </p>
+
       {pct != null && progress && (
-        <div className="flex flex-col gap-1">
-          <Progress value={pct} indicatorClassName={statusBar[goal.status]} label={progress} />
-          <span className="tabular text-xs text-muted-foreground">{progress}</span>
+        <div className="col-span-2 flex flex-col gap-1">
+          <ProgressLine value={pct} status={goal.status} label={progress} />
+          <span className="num text-sm text-ink-3">{progress}</span>
         </div>
       )}
-      {goal.type === "min_sell_price" && goal.eur_per_mwh != null && (
-        <span className="text-xs text-muted-foreground">No selling while the price is below €{goal.eur_per_mwh.toFixed(2)}/MWh.</span>
-      )}
-      {/* Reserves already show progress; their message adds only the outcome ("6 MWh reached at 12:45"). */}
-      {goal.message && (goal.type !== "reserve" || ["met", "missed", "violated"].includes(goal.status)) && (
-        <span className={goal.status === "missed" || goal.status === "violated" ? "text-xs text-bad" : "text-xs text-muted-foreground"}>
-          {goal.message}
-        </span>
-      )}
+      {showMessage && <p className={cn("col-span-2 text-sm", failed ? "text-bad" : "text-ink-2")}>{goal.message}</p>}
       {goal.status === "unreachable" && (
-        <span className="flex items-center gap-1 text-xs text-bad">
-          <CircleAlert className="size-3.5" /> Not enough time left to store this energy, even at full power.
-        </span>
+        <p className="col-span-2 text-sm text-bad">Not enough time left to store this, even charging at full power.</p>
       )}
+
+      <button
+        type="button"
+        onClick={() => onDelete(goal.id)}
+        disabled={deleting}
+        className="col-span-2 w-fit text-sm text-ink-3 underline-offset-2 hover:text-bad hover:underline"
+        aria-label={`Remove goal "${goal.source_text}"`}
+      >
+        Remove
+      </button>
     </li>
   );
 }

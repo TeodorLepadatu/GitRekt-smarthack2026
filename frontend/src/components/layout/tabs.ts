@@ -1,15 +1,30 @@
-import { Activity, CalendarRange, History, Target, type LucideIcon } from "lucide-react";
+export type TabId = "now" | "day" | "goals" | "decisions";
 
-export type TabId = "now" | "today" | "goals" | "history";
-
-export const TABS: { id: TabId; label: string; icon: LucideIcon; hint: string }[] = [
-  { id: "now", label: "Now", icon: Activity, hint: "What the battery is doing and why" },
-  { id: "today", label: "Today", icon: CalendarRange, hint: "Prices, battery level and power for the whole day" },
-  { id: "goals", label: "Goals", icon: Target, hint: "Tell the system what you want" },
-  { id: "history", label: "History", icon: History, hint: "Every decision and who made it" },
+export const TABS: { id: TabId; label: string; title: string; intro: string }[] = [
+  { id: "now", label: "Now", title: "Now", intro: "" },
+  {
+    id: "day",
+    label: "Day",
+    title: "The day, interval by interval",
+    intro: "Price, stored energy and site power for all 96 quarter-hours. Past intervals are measured, later ones are forecast.",
+  },
+  {
+    id: "goals",
+    label: "Goals",
+    title: "What the battery should aim for",
+    intro: "Write a goal as you would say it on the phone. It is turned into a rule and checked every 15 minutes.",
+  },
+  {
+    id: "decisions",
+    label: "Decisions",
+    title: "Decision log",
+    intro: "Every quarter-hour decision since 00:00, latest first. Open a row to read the AI's reasoning.",
+  },
 ];
 
 export function tabFromHash(): TabId {
   const h = window.location.hash.replace("#", "");
+  if (h === "today") return "day";
+  if (h === "history") return "decisions";
   return TABS.some((t) => t.id === h) ? (h as TabId) : "now";
 }

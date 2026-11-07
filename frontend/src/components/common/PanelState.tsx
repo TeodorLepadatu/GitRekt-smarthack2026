@@ -1,13 +1,10 @@
-import { AlertTriangle, RotateCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export function PanelLoading({ rows = 3, className }: { rows?: number; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3", className)} aria-busy="true" aria-label="Loading">
       {Array.from({ length: rows }, (_, i) => (
-        <Skeleton key={i} className={cn("h-6", i === 0 ? "w-2/3" : "w-full")} />
+        <div key={i} className={cn("h-4 animate-pulse bg-wash", i === 0 ? "w-2/3" : "w-full")} />
       ))}
     </div>
   );
@@ -24,20 +21,13 @@ interface PanelErrorProps {
 
 export function PanelError({ what, message, onRetry, className }: PanelErrorProps) {
   return (
-    <div
-      role="alert"
-      className={cn(
-        "flex flex-col items-start gap-3 rounded-lg border border-bad/30 bg-bad/8 p-4 text-sm sm:flex-row sm:items-center",
-        className,
-      )}
-    >
-      <AlertTriangle className="size-5 shrink-0 text-bad" />
-      <p className="flex-1">{message ?? `Could not load ${what}. The system may be restarting.`}</p>
+    <p role="alert" className={cn("text-sm text-bad", className)}>
+      {message ?? `Could not load ${what}. The system may be restarting.`}{" "}
       {onRetry && (
-        <Button size="sm" variant="outline" onClick={onRetry}>
-          <RotateCw /> Try again
-        </Button>
+        <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">
+          Try again
+        </button>
       )}
-    </div>
+    </p>
   );
 }

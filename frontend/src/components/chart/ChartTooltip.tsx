@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { TooltipProps } from "recharts";
-import { actionColor, ActionIcon } from "@/components/common/ActionIcon";
-import { actionKind, actionLabel, fmtMw, fmtMwh, fmtPrice } from "@/lib/labels";
+import { actionWord } from "@/components/common/marks";
+import { actionLabel, fmtMw, fmtMwh, fmtPrice } from "@/lib/labels";
 import { cn, indexToTime } from "@/lib/utils";
 import type { ChartRow } from "./chartData";
 
@@ -14,8 +14,8 @@ function rowOf(props: Props): ChartRow | null {
 
 function Shell({ children, time }: { children: ReactNode; time: string }) {
   return (
-    <div className="max-w-72 rounded-lg border bg-card p-3 text-sm text-card-foreground shadow-lg">
-      <div className="mb-1.5 font-semibold">{time}</div>
+    <div className="max-w-72 border border-ink bg-sheet px-3 py-2.5 text-sm text-ink">
+      <div className="num mb-1.5 text-xs text-ink-3">{time}</div>
       {children}
     </div>
   );
@@ -23,31 +23,25 @@ function Shell({ children, time }: { children: ReactNode; time: string }) {
 
 const range = (x: number) => `${indexToTime(x)}–${x + 1 === 96 ? "24:00" : indexToTime(x + 1)}`;
 
-/** Full tooltip for the price chart: price, battery level, action, sentence. */
+/** Price chart tooltip: price, stored energy, what the battery did and why. */
 export function IntervalTooltip(props: Props) {
   const r = rowOf(props);
   if (!r || r.x >= 96) return null;
-  const kind = r.setpoint != null ? actionKind(r.setpoint) : null;
   return (
     <Shell time={range(r.x)}>
-      <dl className="tabular grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-        <dt className="text-muted-foreground">Price</dt>
-        <dd className={cn("font-medium", r.price != null && r.price < 0 && "text-ok")}>
-          {r.price != null ? fmtPrice(r.price) : "–"}
-        </dd>
-        <dt className="text-muted-foreground">Battery</dt>
-        <dd className="font-medium">{r.soc != null ? fmtMwh(r.soc) : "not yet"}</dd>
+      <dl className="num grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        <dt className="text-ink-3">price</dt>
+        <dd className={cn("text-right", r.price != null && r.price < 0 && "text-ok")}>{r.price != null ? fmtPrice(r.price) : "–"}</dd>
+        <dt className="text-ink-3">stored</dt>
+        <dd className="text-right">{r.soc != null ? fmtMwh(r.soc) : "not yet"}</dd>
       </dl>
-      {kind && r.setpoint != null ? (
+      {r.setpoint != null ? (
         <>
-          <div className={cn("mt-2 flex items-center gap-1.5 font-semibold", actionColor[kind])}>
-            <ActionIcon kind={kind} className="size-4" />
-            {actionLabel(r.setpoint)}
-          </div>
-          {r.explanation && <p className="mt-1 leading-snug text-muted-foreground">{r.explanation}</p>}
+          <div className={cn("mt-2 font-semibold", actionWord(r.setpoint))}>{actionLabel(r.setpoint)}</div>
+          {r.explanation && <p className="mt-0.5 leading-snug text-ink-2">{r.explanation}</p>}
         </>
       ) : (
-        <p className="mt-2 text-muted-foreground">Forecast only — not decided yet.</p>
+        <p className="mt-2 text-ink-3">Forecast only, not decided yet.</p>
       )}
     </Shell>
   );
@@ -56,19 +50,18 @@ export function IntervalTooltip(props: Props) {
 export function PowerTooltip(props: Props) {
   const r = rowOf(props);
   if (!r || r.x >= 96) return null;
-  const items: [string, number | null, string][] = [
-    ["Solar", r.solar, "bg-solar"],
-    ["Wind", r.wind, "bg-wind"],
-    ["Demand", r.demand, "bg-demand"],
+  const items: [string, number | null][] = [
+    ["solar", r.solar],
+    ["wind", r.wind],
+    ["site load", r.demand],
   ];
   return (
     <Shell time={range(r.x)}>
-      <dl className="tabular grid grid-cols-[auto_auto_1fr] items-center gap-x-2 gap-y-0.5">
-        {items.map(([label, v, color]) => (
+      <dl className="num grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        {items.map(([label, v]) => (
           <div key={label} className="contents">
-            <span className={cn("size-2.5 rounded-sm", color)} />
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="text-right font-medium">{v != null ? fmtMw(v) : "–"}</dd>
+            <dt className="text-ink-3">{label}</dt>
+            <dd className="text-right">{v != null ? fmtMw(v) : "–"}</dd>
           </div>
         ))}
       </dl>

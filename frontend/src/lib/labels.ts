@@ -157,6 +157,13 @@ export function upNextText(slots: DaySlot[], now: string | null): string | null 
   const start = now ? slots.findIndex((s) => s.time === now) + 1 : 0;
   const future = slots.slice(start);
   if (future.length === 0) return null;
+  const current = start > 0 ? slots[start - 1] : null;
+  if (current && current.price_eur_mwh < 0) {
+    const back = future.find((s) => s.price_eur_mwh >= 0);
+    return back
+      ? `Prices stay below zero until ${back.time}, so charging is paid for until then.`
+      : "Prices stay below zero for the rest of the day.";
+  }
   const firstNeg = future.find((s) => s.price_eur_mwh < 0);
   const firstPeak = future.find((s) => s.price_eur_mwh >= s.break_even);
   const pick =

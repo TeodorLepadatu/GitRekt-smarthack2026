@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
-import { History } from "lucide-react";
 import { useDay, useGoals, useStateSnapshot } from "@/api/hooks";
 import { isDecided, type Interval } from "@/api/types";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { TimelineRow } from "./TimelineRow";
 
@@ -11,8 +9,8 @@ type Filter = "all" | "backup" | "safety";
 
 const filters: { id: Filter; label: string; test: (iv: Interval) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
-  { id: "backup", label: "Backup rules only", test: (iv) => iv.decision.source === "fallback" },
-  { id: "safety", label: "Safety adjusted only", test: (iv) => iv.guard.clipped },
+  { id: "backup", label: "Backup rules", test: (iv) => iv.decision.source === "fallback" },
+  { id: "safety", label: "Changed by safety", test: (iv) => iv.guard.clipped },
 ];
 
 const PAGE = 24;
@@ -33,54 +31,49 @@ export function DecisionTimeline() {
   const rows = decided.filter(filters.find((f) => f.id === filter)!.test);
 
   return (
-    <Card>
-      <CardHeader className="flex-row flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <CardTitle className="flex items-center gap-2">
-            <History className="size-4" /> Decision history
-          </CardTitle>
-          <CardDescription>Every 15-minute decision today, newest first. Click a row to see the AI's reasoning.</CardDescription>
-        </div>
-        <div role="tablist" aria-label="Filter decisions" className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
-          {filters.map((f) => (
-            <button
-              key={f.id}
-              role="tab"
-              aria-selected={filter === f.id}
-              onClick={() => {
-                setFilter(f.id);
-                setLimit(PAGE);
-              }}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                filter === f.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {f.label} <span className="tabular opacity-70">({counts[f.id]})</span>
-            </button>
-          ))}
-        </div>
-      </CardHeader>
-      <CardContent>
-        {day.isPending ? (
-          <PanelLoading rows={6} />
-        ) : day.isError && !day.data ? (
-          <PanelError what="the decision history" onRetry={() => day.refetch()} />
-        ) : rows.length === 0 ? (
-          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {decided.length === 0 ? "No decisions yet today." : "No decisions match this filter."}
-          </p>
-        ) : (
-          <>
-            <div className="hidden grid-cols-[3.5rem_11rem_1fr_auto_6.5rem_1.25rem] gap-x-3 border-b px-3 pb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase md:grid">
-              <span>Time</span>
-              <span>Action</span>
-              <span>What and why</span>
-              <span>Decided by</span>
-              <span className="text-right">Profit</span>
-              <span />
-            </div>
-            <ul className="overflow-hidden rounded-b-lg">
+    <div className="flex flex-col gap-3">
+      <div role="tablist" aria-label="Show" className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+        <span className="label">Show</span>
+        {filters.map((f) => (
+          <button
+            key={f.id}
+            role="tab"
+            aria-selected={filter === f.id}
+            onClick={() => {
+              setFilter(f.id);
+              setLimit(PAGE);
+            }}
+            className={cn(
+              "border-b-2 pb-0.5",
+              filter === f.id ? "border-ink font-semibold text-ink" : "border-transparent text-ink-3 hover:text-ink",
+            )}
+          >
+            {f.label} <span className="num text-ink-3">{counts[f.id]}</span>
+          </button>
+        ))}
+      </div>
+
+      {day.isPending ? (
+        <PanelLoading rows={8} />
+      ) : day.isError && !day.data ? (
+        <PanelError what="the decision log" onRetry={() => day.refetch()} />
+      ) : rows.length === 0 ? (
+        <p className="border-t border-rule-strong py-6 font-serif text-lg text-ink-2">
+          {decided.length === 0 ? "No decisions yet today." : "None today."}
+        </p>
+      ) : (
+        <>
+          <table className="w-full border-b border-rule-strong text-left">
+            <thead>
+              <tr className="border-b border-rule-strong align-bottom">
+                <th className="label pr-4 pb-2 font-semibold">Time</th>
+                <th className="label pr-4 pb-2 font-semibold">Battery</th>
+                <th className="label pr-4 pb-2 font-semibold">Reason</th>
+                <th className="label hidden pr-4 pb-2 font-semibold md:table-cell">Decided by</th>
+                <th className="label pb-2 text-right font-semibold">Profit</th>
+              </tr>
+            </thead>
+            <tbody>
               {rows.slice(0, limit).map((iv) => (
                 <TimelineRow
                   key={iv.time}
@@ -91,19 +84,19 @@ export function DecisionTimeline() {
                   onToggle={() => setOpen((o) => (o === iv.time ? null : iv.time))}
                 />
               ))}
-            </ul>
-            {rows.length > limit && (
-              <button
-                type="button"
-                onClick={() => setLimit((l) => l + PAGE)}
-                className="mt-3 w-full rounded-lg border py-2 text-sm font-medium text-muted-foreground hover:bg-accent"
-              >
-                Show {Math.min(PAGE, rows.length - limit)} more ({rows.length - limit} hidden)
-              </button>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+            </tbody>
+          </table>
+          {rows.length > limit && (
+            <button
+              type="button"
+              onClick={() => setLimit((l) => l + PAGE)}
+              className="w-fit text-sm font-medium underline underline-offset-2"
+            >
+              Show {Math.min(PAGE, rows.length - limit)} earlier ({rows.length - limit} not shown)
+            </button>
+          )}
+        </>
+      )}
+    </div>
   );
 }
