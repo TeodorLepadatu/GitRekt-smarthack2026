@@ -2,7 +2,7 @@
 
 Usage:
     python scripts/visualize_data.py
-    python scripts/visualize_data.py --input dataset.csv --output-dir plots
+    python scripts/visualize_data.py --input data/dataset.csv --output-dir docs/plots
 """
 
 from __future__ import annotations
@@ -112,12 +112,12 @@ def create_plots(data: pd.DataFrame, output_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("dataset.csv"))
-    parser.add_argument("--output-dir", type=Path, default=Path("plots"))
+    parser.add_argument("--input", type=Path, default=Path("data/dataset.csv"))
+    parser.add_argument("--output-dir", type=Path, default=Path("docs/plots"))
     parser.add_argument(
         "--cleaned-output",
         type=Path,
-        default=Path("parsed_dataset.csv"),
+        default=Path("data/parsed_dataset.csv"),
         help="Where to save parsed timestamps and numeric values.",
     )
     return parser.parse_args()
