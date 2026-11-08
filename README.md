@@ -8,8 +8,10 @@ discharge, hold or curtail. A local LLM (Ollama) proposes the move and a determi
 layer has the final say. The dashboard shows what happened and why, in plain language and with
 the real numbers.
 
-- **Real data.** ENTSO-E load, generation and day-ahead prices for Romania, plus Open-Meteo
-  weather, every 15 minutes from 2022-11-07 to 2026-11-07 (140k rows).
+- **Real data.** Load, generation and day-ahead prices for Romania from the
+  [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/), plus weather from
+  [Open-Meteo](https://open-meteo.com/), every 15 minutes from 2022-11-07 to 2026-11-07
+  (140k rows).
 - **Own forecasts.** LightGBM models for demand, solar and wind at any lead time up to 7 days,
   each with a calibrated 10–90 % band.
 - **Goals in plain language.** Operators write goals like *"Store 6 MWh by 18:00"* or *"Never
@@ -56,8 +58,9 @@ With Docker Desktop (or Docker Engine + Compose ≥ 2.24) running, from the repo
 docker compose up --build
 ```
 
-This starts Ollama, pulls and warms the default model (`qwen3.5:4b`), starts the API in LLM
-mode on the **presentation day, 2026-09-28**, and serves the built dashboard through nginx.
+This starts Ollama, pulls and warms the default model (`qwen3.5:4b`), starts the mock price API,
+starts the backend in LLM mode on the **presentation day, 2026-09-28**, and serves the built
+dashboard through nginx.
 On that day solar is almost free at midday (about EUR 9/MWh, with a 4–6 MW surplus) and the
 evening peak goes above EUR 300/MWh. The first run takes a few minutes and needs disk space for
 the model. Stop it with `Ctrl+C` or `docker compose down`.
@@ -102,23 +105,23 @@ python -m pip install -r requirements.txt
 **Windows:**
 
 ```powershell
-.\run_app.ps1                         # real day 2026-09-28, LLM decisions (Ollama must be running)
-.\run_app.ps1 -Date 2026-06-15        # another real day
-.\run_app.ps1 -Date ""                # the made-up demo day
-.\run_app.ps1 -Start 11:15            # pre-run the day up to 11:15
+.\scripts\run_app.ps1                     # real day 2026-09-28, LLM decisions (Ollama must be running)
+.\scripts\run_app.ps1 -Date 2026-06-15    # another real day
+.\scripts\run_app.ps1 -Date ""            # the made-up demo day
+.\scripts\run_app.ps1 -Start 11:15        # pre-run the day up to 11:15
 ```
 
 It opens the backend (port 8001) and the dashboard in two PowerShell windows, and installs the
 frontend packages on the first run. To run without Ollama, set `$UseLLM = $false` at the top of
-`run_app.ps1`. Decisions then come from the rule-based fallback.
+`scripts/run_app.ps1`. Decisions then come from the rule-based fallback.
 
 **macOS / Linux:**
 
 ```bash
-./run_app.sh                          # demo day, rule-based decisions, no Ollama needed
-./run_app.sh --llm --model qwen3:4b   # LLM decisions (Ollama running on the machine)
-./run_app.sh --date 2026-09-28        # a real day
-./run_app.sh --start 11:15            # pre-run the day up to 11:15
+scripts/run_app.sh                          # demo day, rule-based decisions, no Ollama needed
+scripts/run_app.sh --llm --model qwen3:4b   # LLM decisions (Ollama running on the machine)
+scripts/run_app.sh --date 2026-09-28        # a real day
+scripts/run_app.sh --start 11:15            # pre-run the day up to 11:15
 ```
 
 Both processes run in one terminal, and `Ctrl+C` stops them. If Node.js is missing, the
@@ -163,7 +166,7 @@ flowchart TB
     subgraph prep["Prepared once"]
         DATASET["predictions/dataset.csv<br/>ENTSO-E energy + Open-Meteo weather<br/>140k rows, 15 min"]
         DAPRICE["data/energy_price.csv<br/>ENTSO-E day-ahead price"]
-        IMBCSV["synthetic_out/prices.csv<br/>synth_market.py<br/>imbalance prices"]
+        IMBCSV["synthetic_out/prices.csv<br/>scripts/synth_market.py<br/>imbalance prices"]
         MODELS["predictions/models/*.pkl<br/>ML 1 demand, ML 2 solar + wind<br/>each with a 10-90% band"]
         DATASET --> MODELS
     end
@@ -336,7 +339,7 @@ battery is really for. The same hour of 2026-06-15, with the battery starting em
 
 The battery's measured value flips sign. Without a battery nothing absorbs the error, so the
 full penalty lands on the site. Imbalance prices come from `synthetic_out/prices.csv`
-(`synth_market.py`), so they are synthetic even on a real day. The day-ahead price stays the
+(`scripts/synth_market.py`), so they are synthetic even on a real day. The day-ahead price stays the
 real ENTSO-E one, and the pair is clamped so that deviating can never pay better than
 delivering the plan.
 
@@ -384,29 +387,57 @@ not happened yet.
 
 ## Data
 
-| File | Source | Built by |
-|---|---|---|
-| `data/energy_price.csv` | ENTSO-E day-ahead price, Romania | `energy_price.py` |
-| `data/total_load_day_ahead_actual/…` | ENTSO-E total load (day-ahead + actual) | `total_load_day_ahead_actual.py` |
-| generation per production type | ENTSO-E actual generation | `actual_generation_per_production_type.py` |
-| `dataset.csv` | load + generation, aligned on UTC | `build_dataset.py` |
-| `predictions/dataset.csv` | the above + Open-Meteo weather + calendar | `predictions/build_dataset.py` |
-| `synthetic_out/*.csv` | synthetic portfolio, imbalance prices, producer offers | `synth_market.py` |
-| `plots/*.png` | overview, hourly profile, correlation heatmap | `visualize_data.py` |
+### Sources
 
-The ENTSO-E scrapers (`entsoe_export.py`) split a range into 7-day windows, resume after an
-interruption, and need the `Authorization: Bearer` token from a logged-in browser session in
-`ENTSOE_TOKEN`. All the data the app needs is already in the repository, so you do not have to
-download anything to run it.
+| Source | What we took | Link |
+|---|---|---|
+| **ENTSO-E Transparency Platform** | Romania, every 15 min: day-ahead prices, total load (day-ahead + actual), actual generation per production type (solar, wind, hydro, nuclear, gas, lignite, biomass, storage) | [transparency.entsoe.eu](https://transparency.entsoe.eu/) |
+| **Open-Meteo** | Weather at 15 min (temperature, precipitation, irradiance, cloud cover, wind at 80 m) for Romania's 7 largest cities, 3 solar regions and 3 wind regions, from the Historical Forecast API | [open-meteo.com](https://open-meteo.com/) · [Historical Forecast API](https://open-meteo.com/en/docs/historical-forecast-api) |
+| **python-holidays** | Romanian public holidays for the calendar features | [github.com/vacanza/holidays](https://github.com/vacanza/holidays) |
+| **Synthetic** (ours) | Imbalance prices, a simulated customer portfolio and producer offers, generated from the real load and generation by `scripts/synth_market.py` | — |
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Energy data from the
+[ENTSO-E Transparency Platform](https://transparency.entsoe.eu/).
+
+### Files
+
+| File | Contents | Built by |
+|---|---|---|
+| `data/energy_price.csv` | ENTSO-E day-ahead price, Romania | `scripts/energy_price.py` |
+| `data/total_load_day_ahead_actual/…` | ENTSO-E total load (day-ahead + actual) | `scripts/total_load_day_ahead_actual.py` |
+| generation per production type | ENTSO-E actual generation | `scripts/actual_generation_per_production_type.py` |
+| `data/dataset.csv` | load + generation, aligned on UTC | `scripts/build_dataset.py` |
+| `predictions/dataset.csv` | the above + Open-Meteo weather + calendar (140,302 rows, 2022-11-07 → 2026-11-07) | `predictions/build_dataset.py` |
+| `predictions/data/weather/` | cached Open-Meteo downloads per site and year | `predictions/build_dataset.py` |
+| `synthetic_out/*.csv` | synthetic portfolio, imbalance prices, producer offers | `scripts/synth_market.py` |
+| `docs/plots/*.png` | overview, hourly profile, correlation heatmap | `scripts/visualize_data.py` |
+
+All the data the app needs is already in the repository, so you don't need to download anything
+to run it. To rebuild it: the ENTSO-E scrapers (`scripts/entsoe_export.py`) split a date range
+into 7-day windows (the platform's export limit) and resume after an interruption. They need
+the `Authorization: Bearer` token from a logged-in browser session on the platform, set in
+`ENTSOE_TOKEN`. Open-Meteo needs no key.
 
 ```powershell
 $env:ENTSOE_TOKEN = "eyJ..."
-python energy_price.py --start 2026-01-01 --end 2026-11-07
-python build_dataset.py
+python scripts/energy_price.py --start 2026-01-01 --end 2026-11-07
+python scripts/total_load_day_ahead_actual.py
+python scripts/actual_generation_per_production_type.py
+python scripts/build_dataset.py
 python predictions/build_dataset.py        # --refresh to re-download the weather
-python synth_market.py dataset.csv synthetic_out
-python visualize_data.py
+python scripts/synth_market.py data/dataset.csv synthetic_out
+python scripts/visualize_data.py
 ```
+
+### Mock price API
+
+`price_api/` serves the day-ahead and imbalance prices per 15 min over HTTP
+(`python -m price_api`, port 8100, docs at `/docs`). It uses the real files where they cover the
+day and generates a realistic curve, seeded by the date, where they don't. When `PRICE_API_URL`
+is set, `python -m backend --date …` and `python -m loop --date …` take their prices from it,
+and if it can't be reached they fall back to the CSVs. Docker Compose runs it as the `prices`
+service. See [`price_api/README.md`](price_api/README.md).
 
 ---
 
@@ -466,6 +497,7 @@ Everything is read from environment variables in `config.Settings`:
 | `ENERGY_AGENT_BATTERY_MWH` | `10` | battery capacity |
 | `ENERGY_AGENT_BATTERY_MW` | `3` | battery max power |
 | `ENERGY_AGENT_MAX_IMPORT_MW` | unset | peak-shaving import cap |
+| `PRICE_API_URL` | unset | take prices from the mock price API (e.g. `http://127.0.0.1:8100`). Unset means the CSVs are read |
 | `ENERGY_AGENT_GOALS_PATH` | `data/goals.json` | saved goals |
 | `ENERGY_AGENT_SETTLEMENT_LOG` | `logs/settlement.jsonl` | settlement log (empty = off) |
 | `ENERGY_AGENT_LLM_LOG` | `logs/llm_calls.jsonl` | every LLM call (empty = off) |
@@ -513,11 +545,12 @@ Details: [`backend/README.md`](backend/README.md) and [`frontend/README.md`](fro
 | `backend/` | FastAPI app, the worker thread that runs the day (`service.py`) and the operator desk (`desk.py`) |
 | `frontend/` | The operator dashboard (React + TypeScript), with a full in-browser mock of the API |
 | `battery.py`, `config.py`, `common.py` | Battery definition, settings from the environment, shared helpers |
-| `data/`, `synthetic_out/`, `plots/` | Input data, synthetic market data, exploratory plots |
-| `*.py` at the root | ENTSO-E scrapers, dataset builder, synthetic market, plots |
-| `tests/` and `*/tests/` | The test suite |
-| `Dockerfile`, `docker-compose*.yml`, `run_app.ps1`, `run_app.sh` | Ways to run it |
-| `LLM_energy_agent_plan.pdf` | The original design plan |
+| `price_api/` | Mock energy price API: real ENTSO-E and synthetic prices, generated ones for days the files don't cover |
+| `data/`, `synthetic_out/` | Input data (ENTSO-E prices, load, the merged dataset) and synthetic market data |
+| `scripts/` | ENTSO-E scrapers, dataset builder, synthetic market, plots, and the `run_app.ps1` / `run_app.sh` launchers |
+| `docs/` | The original design plan (`LLM_energy_agent_plan.pdf`) and the exploratory plots |
+| `tests/` | The whole Python test suite |
+| `Dockerfile`, `docker-compose*.yml` | Running it in Docker |
 
 ---
 
@@ -527,7 +560,7 @@ Details: [`backend/README.md`](backend/README.md) and [`frontend/README.md`](fro
 pytest -q
 ```
 
-`pytest.ini` collects `tests/`, `guard/tests/`, `validator/tests/` and `settlement/tests/`. The
+All tests live in `tests/` (install pytest first with `python -m pip install pytest`). The
 suite runs **without Ollama**, because LLM calls are replaced by fake clients. The two
 `*_llm.py` tests run against the real model and are skipped when Ollama is not available. The
 suite covers the pipeline, prompt assembly, goal parsing and the goal store, the guard, the
