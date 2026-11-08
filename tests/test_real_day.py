@@ -7,7 +7,6 @@ the real CSVs and are skipped when those are not there.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -17,6 +16,7 @@ from loop.real_day import (
     N,
     NATIONAL_P99_MW,
     PRICES_CSV,
+    ROOT,
     STEP_S,
     day_timestamps,
     gate_closure,
@@ -297,8 +297,8 @@ def test_a_real_day_settles_on_the_actuals_not_the_forecast():
 
 
 real_models = pytest.mark.skipif(
-    not (Path("predictions/models/demand_model.pkl").exists()
-         and Path("predictions/models/production_model.pkl").exists()),
+    not ((ROOT / "predictions/models/demand_model.pkl").exists()
+         and (ROOT / "predictions/models/production_model.pkl").exists()),
     reason="trained models not found - run predictions/train_and_evaluate.ipynb",
 )
 real_prices = pytest.mark.skipif(not PRICES_CSV.exists(), reason=f"{PRICES_CSV} not found")

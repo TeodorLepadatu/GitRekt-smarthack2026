@@ -52,11 +52,14 @@ LOCAL_TZ = ZoneInfo("Europe/Bucharest")  # same zone predictions/core.py builds 
 STEP_S = 15 * 60
 N = 96
 
-PRICES_CSV = Path("data/energy_price.csv")
+# The repository root: data paths are resolved from here, not from the working directory.
+ROOT = Path(__file__).resolve().parent.parent
+
+PRICES_CSV = ROOT / "data" / "energy_price.csv"
 PRICE_COLUMN = "Day-ahead Price (EUR/MWh)"
 
 # synth_market.py's imbalance prices: what deviating from the plan costs.
-IMBALANCE_CSV = Path("synthetic_out/prices.csv")
+IMBALANCE_CSV = ROOT / "synthetic_out" / "prices.csv"
 
 # 99th percentile of each national series over the four years in predictions/dataset.csv.
 # The p99 rather than the max: one freak hour must not shrink every other day.
