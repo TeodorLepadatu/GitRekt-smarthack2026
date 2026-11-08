@@ -122,12 +122,12 @@ python -m loop --date 2026-06-15 --llm --model qwen3.5:latest --goals "Store 6 M
 From the repository root, run:
 
 ```powershell
-.\run_app.ps1
+.\scripts\run_app.ps1
 ```
 
 This opens the backend and frontend in separate PowerShell windows. The dashboard is available at
 `http://localhost:5173`. The launcher uses rule-based decisions by default and does not require Ollama.
-To use Ollama, change `$UseLLM = $false` to `$UseLLM = $true` in `run_app.ps1`.
+To use Ollama, change `$UseLLM = $false` to `$UseLLM = $true` in `scripts/run_app.ps1`.
 
 ### Run with Docker
 
@@ -158,9 +158,9 @@ Without Docker, from the repository root (uses `.venv/bin/python` if it exists, 
 `python3`; install the packages once with `python3 -m pip install -r requirements.txt`):
 
 ```bash
-./run_app.sh                          # rule-based decisions, no Ollama needed
-./run_app.sh --llm --model qwen3:4b   # decisions by the LLM (Ollama running on the machine)
-./run_app.sh --date 2026-06-15        # a real day
+scripts/run_app.sh                          # rule-based decisions, no Ollama needed
+scripts/run_app.sh --llm --model qwen3:4b   # decisions by the LLM (Ollama running on the machine)
+scripts/run_app.sh --date 2026-06-15        # a real day
 ```
 
 It starts the backend and the dashboard in one terminal (`http://localhost:5173`); `Ctrl+C` stops
@@ -219,7 +219,7 @@ ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
   docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
 ```
 
-Without Docker, `./run_app.sh` works on Linux as on macOS (it needs Python 3 and, for the
+Without Docker, `scripts/run_app.sh` works on Linux as on macOS (it needs Python 3 and, for the
 dashboard, Node.js or Docker). Open `http://localhost:5173` in every case.
 
 `--date` replays a real day end to end. The forecasts are issued at the day-ahead gate
@@ -288,5 +288,5 @@ python -m pip install -r requirements.txt
 Generate the parsed dataset and plots:
 
 ```powershell
-python visualize_data.py
+python scripts/visualize_data.py
 ```

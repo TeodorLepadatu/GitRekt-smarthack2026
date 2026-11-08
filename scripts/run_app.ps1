@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $UseLLM = $true
-$root = (Resolve-Path $PSScriptRoot).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $frontend = Join-Path $root "frontend"
 

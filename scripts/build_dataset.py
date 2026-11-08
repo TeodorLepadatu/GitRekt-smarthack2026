@@ -11,7 +11,7 @@ as Unix epoch seconds (e.g. 1667779200 = 2022-11-07 00:00 UTC). Only intervals p
 files are kept. Missing values ("-", "n/e") become empty cells.
 
 Usage:
-    python build_dataset.py [--load PATH] [--generation PATH] [--out data/dataset.csv]
+    python scripts/build_dataset.py [--load PATH] [--generation PATH] [--out data/dataset.csv]
 """
 
 from __future__ import annotations

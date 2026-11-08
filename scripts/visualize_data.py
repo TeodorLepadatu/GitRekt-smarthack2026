@@ -1,8 +1,8 @@
 """Create a small set of useful plots from the energy dataset.
 
 Usage:
-    python visualize_data.py
-    python visualize_data.py --input dataset.csv --output-dir plots
+    python scripts/visualize_data.py
+    python scripts/visualize_data.py --input dataset.csv --output-dir plots
 """
 
 from __future__ import annotations

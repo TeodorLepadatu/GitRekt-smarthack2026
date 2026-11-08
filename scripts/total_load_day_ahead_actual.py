@@ -19,8 +19,8 @@ the `downloadRequest/register` request (or its `Cookie` header):
 On Windows, `pip install truststore` if you get CERTIFICATE_VERIFY_FAILED.
 
 Usage:
-    python total_load_day_ahead_actual.py
-    python total_load_day_ahead_actual.py --start 2022-11-07 --end 2026-11-07 --out data/load
+    python scripts/total_load_day_ahead_actual.py
+    python scripts/total_load_day_ahead_actual.py --start 2022-11-07 --end 2026-11-07 --out data/load
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ Output: 3 CSV files with SIMULATED data (everything synthetic is driven by real
   prices.csv     - day-ahead price + imbalance prices (EUR/MWh), per 15 min
   offers.csv     - daily offers from other Romanian producers (volume MW, price EUR/MWh)
 
-Usage: python synth_market.py dataset.csv [out_dir]
+Usage: python scripts/synth_market.py dataset.csv [out_dir]
 """
 import sys
 from pathlib import Path

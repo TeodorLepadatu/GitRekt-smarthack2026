@@ -3,7 +3,7 @@
 Default range: today back 4 years. Output: data/actual_generation_per_production_type.csv
 
     $env:ENTSOE_TOKEN = "eyJ..."     # Authorization header from a logged-in browser session
-    python actual_generation_per_production_type.py [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+    python scripts/actual_generation_per_production_type.py [--start YYYY-MM-DD] [--end YYYY-MM-DD]
 """
 
 import sys

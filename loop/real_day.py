@@ -139,7 +139,7 @@ def load_prices(path: Path | str = PRICES_CSV) -> dict[int, float]:
 
     p = Path(path)
     if not p.exists():
-        raise RealDayError(f"{p} not found - run `python energy_price.py` to download prices")
+        raise RealDayError(f"{p} not found - run `python scripts/energy_price.py` to download prices")
     df = pd.read_csv(p)
     if "timestamp" not in df.columns:
         raise RealDayError(f"{p} has no `timestamp` column (columns: {list(df.columns)})")
@@ -168,7 +168,7 @@ def load_imbalance_prices(path: Path | str = IMBALANCE_CSV) -> dict[int, Imbalan
     p = Path(path)
     if not p.exists():
         raise RealDayError(
-            f"{p} not found - run `python synth_market.py predictions/dataset.csv synthetic_out` "
+            f"{p} not found - run `python scripts/synth_market.py predictions/dataset.csv synthetic_out` "
             "to generate the market prices")
     df = pd.read_csv(p)
     missing = {"time", "imb_short_price", "imb_long_price"} - set(df.columns)

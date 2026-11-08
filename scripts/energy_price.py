@@ -5,7 +5,7 @@ Output: data/energy_price.csv with two columns: `timestamp` (Unix epoch seconds,
 UTC, start of the MTU interval) and the day-ahead price in EUR/MWh.
 
     $env:ENTSOE_TOKEN = "eyJ..."     # Authorization header from a logged-in browser session
-    python energy_price.py [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+    python scripts/energy_price.py [--start YYYY-MM-DD] [--end YYYY-MM-DD]
 """
 
 import csv

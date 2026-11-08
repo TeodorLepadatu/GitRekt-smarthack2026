@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Start the backend and the dashboard on macOS or Linux (the counterpart of run_app.ps1).
 #
-#   ./run_app.sh                          # rule-based decisions, no Ollama needed
-#   ./run_app.sh --llm                    # decisions by the LLM (Ollama must be running)
-#   ./run_app.sh --llm --model qwen3:4b   # pick the model
-#   ./run_app.sh --date 2026-06-15        # a real day (ML forecasts + ENTSO-E prices)
-#   ./run_app.sh --start 11:15            # pre-run the day up to 11:15
+#   scripts/run_app.sh                          # rule-based decisions, no Ollama needed
+#   scripts/run_app.sh --llm                    # decisions by the LLM (Ollama must be running)
+#   scripts/run_app.sh --llm --model qwen3:4b   # pick the model
+#   scripts/run_app.sh --date 2026-06-15        # a real day (ML forecasts + ENTSO-E prices)
+#   scripts/run_app.sh --start 11:15            # pre-run the day up to 11:15
 #
 # Dashboard: http://localhost:5173 . Ctrl+C stops both.
 # Uses .venv/bin/python if it exists, otherwise python3. Needs Node.js for the
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND="$ROOT/frontend"
 
 if [[ -x "$ROOT/.venv/bin/python" ]]; then

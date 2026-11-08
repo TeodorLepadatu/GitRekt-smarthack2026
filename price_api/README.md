@@ -11,8 +11,8 @@ python -m price_api                      # http://127.0.0.1:8100, interactive do
 
 | Price | Real source | When the file does not cover the interval |
 |---|---|---|
-| day-ahead | `data/energy_price.csv` (ENTSO-E, from `energy_price.py`) | generated |
-| imbalance short / long | `synthetic_out/prices.csv` (`synth_market.py`) | generated from the day-ahead price |
+| day-ahead | `data/energy_price.csv` (ENTSO-E, from `scripts/energy_price.py`) | generated |
+| imbalance short / long | `synthetic_out/prices.csv` (`scripts/synth_market.py`) | generated from the day-ahead price |
 
 A generated day-ahead curve has the real file's own shape: the mean price per quarter-hour slot for
 that calendar month (or the nearest month the file covers), scaled by a day-level factor, with a
