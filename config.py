@@ -58,6 +58,9 @@ class Settings:
     # None = no cap, behaviour unchanged. Enforced by the guard, recorded by the settlement.
     max_import_mw: float | None = field(default_factory=lambda: _env_limit("ENERGY_AGENT_MAX_IMPORT_MW"))
 
+    # The mock price API (python -m price_api), e.g. http://127.0.0.1:8100. Unset = read the price CSVs.
+    price_api_url: str | None = field(default_factory=lambda: os.environ.get("PRICE_API_URL") or None)
+
     goals_path: str = field(default_factory=lambda: os.environ.get("ENERGY_AGENT_GOALS_PATH", "data/goals.json"))
     settlement_log_path: str | None = field(
         default_factory=lambda: os.environ.get("ENERGY_AGENT_SETTLEMENT_LOG", "logs/settlement.jsonl") or None

@@ -36,6 +36,7 @@ cd frontend && npm install && npm run dev:api   # http://localhost:5173, proxies
 | `--date` | demo day | a real day (`loop.real_day`): ML forecasts scaled to the site + ENTSO-E prices; `--plan` settles on the forecasts |
 | `--goals-path` | `Settings().goals_path` | where goals are saved; if empty, starts with "Maximise profit", "Store 6 MWh by 18:00", "Never sell below 50 EUR/MWh" |
 | `--log` | none | every interval record as JSONL |
+| `PRICE_API_URL` (env) | unset | with `--date`: fetch the day's prices from the mock price API (`python -m price_api`); falls back to the CSVs if it is down |
 | `--host`, `--port` | `127.0.0.1`, `8000` | |
 
 ## Routes

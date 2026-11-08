@@ -69,7 +69,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.date:
         try:
             day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan,
-                           imbalance=args.imbalance)
+                           imbalance=args.imbalance, price_api=settings.price_api_url)
         except RealDayError as exc:
             print(f"cannot build {args.date}: {exc}", file=sys.stderr)
             return 2
