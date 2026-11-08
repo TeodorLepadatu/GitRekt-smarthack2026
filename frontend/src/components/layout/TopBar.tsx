@@ -53,7 +53,7 @@ export function ThemeButton({ theme, onToggle }: { theme: "light" | "dark"; onTo
 export function TopBar({ tab, onTab, live, stream, mocks, theme, onToggleTheme, now, date }: Props) {
   const conn = live ? "connected" : stream === "connecting" ? "connecting" : "no connection";
   return (
-    <header className="border-b border-rule-strong bg-paper">
+    <header className="border-b border-rule-strong bg-paper print:hidden">
       <div className="flex items-start justify-between gap-6 px-6 pt-6 lg:px-12">
         <div className="flex flex-col">
           <span className="font-serif text-4xl leading-none font-semibold tracking-tight">Site energy log</span>

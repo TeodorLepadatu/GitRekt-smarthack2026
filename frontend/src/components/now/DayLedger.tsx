@@ -66,7 +66,6 @@ function MoneyColumn({ go }: { go: (t: TabId) => void }) {
   if (m.isError && !m.data) return <PanelError what="today's money" onRetry={() => m.refetch()} />;
   const d = m.data;
   const up = d.profit_today_eur >= 0;
-  const added = d.value_added_eur;
   return (
     <>
       <p className={cn("num text-4xl font-medium whitespace-nowrap 2xl:text-5xl", up ? "text-ok" : "text-bad")}>
@@ -75,11 +74,6 @@ function MoneyColumn({ go }: { go: (t: TabId) => void }) {
       </p>
       <p className="mt-1 text-base text-ink-2">
         {up ? "earned" : "spent"} on the grid since 00:00, after {fmtEur(Math.abs(d.wear_eur))} of battery wear.
-      </p>
-      <p className="mt-4 font-serif text-xl leading-snug">
-        The battery made{" "}
-        <span className={cn("num font-medium", added >= 0 ? "text-ok" : "text-bad")}>{fmtEur(Math.abs(added))}</span>{" "}
-        {added >= 0 ? "more" : "less"} than the site would have without it.
       </p>
       <dl className="num mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-base">
         <dt className="text-ink-3">sold</dt>

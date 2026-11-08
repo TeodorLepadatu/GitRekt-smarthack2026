@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
-import { useMetrics } from "@/api/hooks";
-import type { Metrics } from "@/api/types";
+import { useMetrics, useStateSnapshot } from "@/api/hooks";
+import type { Metrics, StateSnapshot } from "@/api/types";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
 import { fmtEur, fmtMw, fmtMwh, fmtPct } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 type Figure = { label: string; value: ReactNode; note?: string; tone?: string };
 
-function energyFigures(d: Metrics): Figure[] {
+function energyFigures(d: Metrics, s: StateSnapshot | undefined): Figure[] {
   const up = d.profit_today_eur >= 0;
+  const stored = s?.current?.soc_mwh ?? null;
   return [
     {
       label: "Profit since 00:00",
@@ -17,10 +18,9 @@ function energyFigures(d: Metrics): Figure[] {
       note: `after ${fmtEur(Math.abs(d.wear_eur))} battery wear`,
     },
     {
-      label: "Battery's share",
-      value: `${d.value_added_eur >= 0 ? "+" : ""}${fmtEur(d.value_added_eur)}`,
-      tone: d.value_added_eur >= 0 ? "text-ok" : "text-bad",
-      note: "compared with no battery",
+      label: "Energy stored",
+      value: stored == null ? "—" : fmtMwh(stored),
+      note: s ? `of ${fmtMwh(s.capacity_mwh)} capacity` : undefined,
     },
     { label: "Sold", value: fmtMwh(d.energy_sold_mwh), note: "exported to the grid" },
     { label: "Bought", value: fmtMwh(d.energy_bought_mwh), note: "imported from the grid" },
@@ -66,9 +66,10 @@ function ImportLimitLine({ d }: { d: Metrics }) {
 /** One ruled row of figures (a ledger line, not a grid of cards). */
 export function MetricsCards({ kind }: { kind: "energy" | "trust" }) {
   const m = useMetrics();
+  const state = useStateSnapshot();
   if (m.isPending) return <PanelLoading rows={2} />;
   if (m.isError && !m.data) return <PanelError what="today's figures" onRetry={() => m.refetch()} />;
-  const figures = kind === "energy" ? energyFigures(m.data) : trustFigures(m.data);
+  const figures = kind === "energy" ? energyFigures(m.data, state.data) : trustFigures(m.data);
   return (
     <>
       <dl className="grid grid-cols-2 border-y border-rule-strong sm:grid-cols-3 lg:grid-cols-5">

@@ -33,6 +33,7 @@ from typing import Any, Callable, Iterator, Optional
 from battery import BatteryConfig
 from control import Autonomy, OperatorControl, autonomy_from
 from dashboard import day_payload, goals_payload, interval_payload, metrics_payload, state_payload
+from dashboard.report import ai_summary, day_report
 from feature_builder import build_features
 from goal_parser import GoalStore
 from guard import guard
@@ -87,10 +88,12 @@ class Backend:
         autonomy: Optional[Autonomy] = None,
         operator_log_dir: Optional[str] = None,
         next_day: Optional[Callable[[str], DayInput]] = None,
+        report_llm: Any = None,
     ):
         self.goals = goal_store
         # Builds the day for a "YYYY-MM-DD" date, for "Run the next day"; None = one day only.
         self.next_day_factory = next_day
+        self.report_llm = report_llm            # a ChatClient for the report's AI paragraph; None = off
         self._day_start_soc = start_soc_mwh     # carried over from the previous day by next_day()
         self._building_next = threading.Lock()  # building a real day takes seconds: one at a time
         self.max_import_mw = max_import_mw  # grid import cap (peak shaving); None = none
@@ -159,6 +162,24 @@ class Backend:
     def audit_list(self, limit: int = 200) -> list[dict]:
         with self._cond:
             return self.audit.list(limit)
+
+    def report(self) -> dict:
+        """The day report for the intervals decided so far (dashboard/report.py)."""
+        snap = self._snap
+        with self._cond:
+            audit = [a for a in self.audit.list(1000) if a.get("date") == self.date]
+            flags = self.flags.list()
+        return day_report(
+            date=self.date, intervals=[self._interval(r) for r in snap.records], total_intervals=snap.day.n,
+            metrics=metrics_payload(self._view()), goals=self.goal_list(),
+            audit=list(reversed(audit)), flags=flags, interval_h=self.cfg.interval_h)
+
+    def report_summary(self) -> dict:
+        """The report's closing paragraph written by the AI, checked against the report's numbers."""
+        report = self.report()
+        if self.report_llm is None:
+            return {"summary": report["summary"], "source": "report", "note": "the AI is switched off"}
+        return ai_summary(report, self.report_llm.chat_json)
 
     def upcoming(self, n: int = 8) -> dict:
         """The next ``n`` intervals' planned action, before the AI has seen them.
@@ -438,7 +459,7 @@ class Backend:
             record = next((r for r in self._snap.records if r.get("time") == time), None)
             if record is None:
                 raise NotFound(time)
-            flag = self.flags.flag(self.date, record, interval_payload(record), reason)
+            flag = self.flags.flag(self.date, record, self._interval(record), reason)
             self._log("decision_flagged", f"Flagged the {time} decision: {reason or 'no reason given'}",
                       {"time": time, "reason": reason})
         return flag
@@ -557,7 +578,7 @@ class Backend:
         finally:
             with self._cond:
                 self._deciding = None
-        interval = interval_payload(record)
+        interval = self._interval(record)
         with self._cond:
             if runner is not self._runner:          # reset while this interval ran: drop it
                 return None
@@ -618,6 +639,11 @@ class Backend:
         snap = self._snap
         return self.audit.add(action, summary, sim_time=snap.records[-1]["time"] if snap.records else None,
                               date=self.date, detail=detail)
+
+    def _interval(self, record: dict) -> dict:
+        """One record as the dashboard's Interval, its explanation naming the active goals."""
+        return interval_payload(record, p_max_mw=self.cfg.p_max_mw,
+                                goals=self.goals.config.to_dict().get("goals") or [])
 
     def _goal_states(self, snap: "_Snapshot") -> list[dict]:
         """The snapshot's goal states under the ids of the goals active now.

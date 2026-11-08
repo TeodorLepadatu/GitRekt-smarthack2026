@@ -15,6 +15,7 @@ import { tabFromHash, TABS, type TabId } from "@/components/layout/tabs";
 import { TopBar } from "@/components/layout/TopBar";
 import { MetricsCards } from "@/components/metrics/MetricsCards";
 import { NowPage } from "@/components/now/NowPage";
+import { ReportPage } from "@/components/report/ReportPage";
 import { DecisionTimeline } from "@/components/timeline/DecisionTimeline";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -78,7 +79,9 @@ export default function App() {
         now={state.data?.current?.time ?? null}
         date={day.data?.date ?? null}
       />
-      <AlertsPanel go={go} />
+      <div className="print:hidden">
+        <AlertsPanel go={go} />
+      </div>
 
       <main key={tab} className="flex flex-col gap-12 px-6 pt-10 pb-44 lg:px-12">
         {tab !== "now" && <PageIntro tab={tab} />}
@@ -105,6 +108,8 @@ export default function App() {
           </Reveal>
         )}
 
+        {tab === "report" && <ReportPage />}
+
         {tab === "goals" && (
           <Reveal>
             <GoalsPanel />
@@ -123,7 +128,7 @@ export default function App() {
         )}
       </main>
       {/* Operator strip on every tab, the demo controls under it. */}
-      <div className="fixed inset-x-0 bottom-0 z-30">
+      <div className="fixed inset-x-0 bottom-0 z-30 print:hidden">
         <OperatorStrip />
         <DemoControls />
       </div>

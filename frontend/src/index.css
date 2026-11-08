@@ -271,3 +271,10 @@
     animation: none;
   }
 }
+
+/* The day report prints as a plain document: no bars, no animation, light paper. */
+@media print {
+  .enter, .enter-fade { animation: none !important; opacity: 1 !important; transform: none !important; }
+  .ghost-text { display: none; }
+  main { padding-bottom: 0 !important; }
+}

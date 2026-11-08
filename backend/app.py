@@ -17,6 +17,8 @@
     POST   /api/sim/run {speed} speed 0 pauses
     POST   /api/sim/reset       back to 00:00
     POST   /api/sim/next-day {speed}   the next date, from the energy stored now (409 if it cannot be built)
+    GET    /api/report          DayReport: the day's decisions, reasons and money so far
+    POST   /api/report/summary  {summary, source, note}: the closing paragraph written by the AI
     GET    /api/health
 
 The operator's desk (backend/desk.py):
@@ -135,6 +137,14 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
         except GoalNotFound:
             raise HTTPException(404, f"goal {goal_id!r} not found")
         return {"ok": True}
+
+    @app.get("/api/report")
+    def report() -> dict:
+        return backend.report()
+
+    @app.post("/api/report/summary")
+    def report_summary() -> dict:
+        return backend.report_summary()
 
     @app.get("/api/metrics")
     def metrics() -> dict:

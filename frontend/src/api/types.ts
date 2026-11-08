@@ -65,6 +65,91 @@ export interface Interval {
   guard: GuardResult;
   settlement: Settlement;
   control: IntervalControl;
+  /** Built from the interval's numbers by the backend (dashboard/explain.py). Absent in the mocks. */
+  explanation?: Explanation;
+}
+
+/** Why the battery did what it did, in plain words with the real numbers. */
+export interface Explanation {
+  /** One sentence: what it did and the main reason, e.g. "Discharging 3.00 MW: covering …". */
+  summary: string;
+  /** Short supporting facts: grid, curtailment, money, the next price peak. */
+  facts: string[];
+  /** What the battery's energy was worth at this interval's price: > 0 delivered, < 0 taken in. */
+  value_eur: number;
+  /** What the safety layer changed, or null. */
+  safety: string | null;
+  /** The AI's own sentence, when it does not contradict the action. */
+  ai_note: string | null;
+  /** The AI wrote a sentence that contradicted its action, so it is not shown. */
+  ai_note_dropped: boolean;
+}
+
+/** One charging or discharging stretch of the day. */
+export interface ReportPhase {
+  kind: "charge" | "discharge";
+  start: string;
+  end: string;
+  energy_mwh: number;
+  avg_price_eur_mwh: number;
+  value_eur: number;
+  text: string;
+}
+
+export interface ReportDecision {
+  time: string;
+  setpoint_mw: number;
+  price_eur_mwh: number;
+  value_eur: number;
+  source: DecisionSource;
+  summary: string;
+  facts: string[];
+  safety: string | null;
+  ai_note: string | null;
+}
+
+/** GET /api/report: the day so far, or the whole day once it is over. */
+export interface DayReport {
+  date: string;
+  complete: boolean;
+  intervals: number;
+  total_intervals: number;
+  /** End of the latest decided interval, e.g. "24:00". */
+  through: string | null;
+  summary: string;
+  /** battery_trades_eur: what the energy the battery delivered was worth, minus what the energy it took in cost. */
+  money: { profit_eur: number; battery_trades_eur: number; imbalance_eur: number };
+  energy: {
+    stored_mwh: number;
+    used_mwh: number;
+    avg_charge_price: number | null;
+    avg_discharge_price: number | null;
+    sold_mwh: number;
+    bought_mwh: number;
+  };
+  phases: ReportPhase[];
+  key_decisions: ReportDecision[];
+  goals: { id: string; text: string; status: GoalStatus; hard: boolean; message: string }[];
+  decisions: {
+    total: number;
+    ai: number;
+    backup: number;
+    operator: number;
+    safety_adjusted: number;
+    backup_reasons: Record<string, number>;
+    ai_notes_dropped: number;
+  };
+  safety: { time: string; text: string; rules: string[] }[];
+  people: { sim_time: string | null; action: string; summary: string }[];
+  flags: { time: string; reason: string }[];
+  forecast: { demand_mae_mw: number | null; production_mae_mw: number | null };
+}
+
+/** POST /api/report/summary. source "report" = the AI's paragraph was not usable; note says why. */
+export interface ReportSummary {
+  summary: string;
+  source: "ai" | "report";
+  note: string | null;
 }
 
 /**

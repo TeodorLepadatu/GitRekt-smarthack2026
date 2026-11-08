@@ -4,7 +4,8 @@ import { isDecided } from "@/api/types";
 import { actionWord } from "@/components/common/marks";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
 import { Reveal } from "@/components/common/Reveal";
-import { actionKind, fallbackReasonText, fmtMw, rulesText, upNextText } from "@/lib/labels";
+import { actionKind, explanationText, fallbackReasonText, fmtMw, rulesText, upNextText } from "@/lib/labels";
+import { ExplanationFacts } from "@/components/common/Explanation";
 import { intervalEnd } from "@/lib/utils";
 import type { TabId } from "@/components/layout/tabs";
 import { ControlPanel } from "@/components/control/ControlPanel";
@@ -72,8 +73,9 @@ export function NowPage({ go }: { go: (t: TabId) => void }) {
             </span>
           </h2>
           <p className="enter max-w-[38ch] font-serif text-2xl leading-snug text-ink-2 sm:text-[1.75rem]" style={step(3)}>
-            {cur.decision.explanation_for_operator}
+            {explanationText(cur)}
           </p>
+          <ExplanationFacts iv={cur} className="enter max-w-[56ch] text-base text-ink-2" />
           {(fb || notes.length > 0) && (
             <p className="enter max-w-[56ch] text-lg text-ink-2" style={step(4)}>
               {fb && <>{fb}. </>}

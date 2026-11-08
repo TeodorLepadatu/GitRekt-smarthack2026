@@ -246,3 +246,8 @@ export function upNextText(slots: DaySlot[], now: string | null): string | null 
   if (!pick) return "No price spikes or negative prices expected for the rest of today.";
   return pick.s === future[0] ? `From now, ${pick.text}` : `From ${pick.s.time}, ${pick.text}`;
 }
+
+/** The interval's explanation in one sentence: the backend's (built from the numbers), else the AI's own. */
+export function explanationText(iv: Pick<Interval, "decision" | "explanation">): string {
+  return iv.explanation?.summary || iv.decision.explanation_for_operator;
+}

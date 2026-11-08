@@ -18,7 +18,7 @@ REPLY = json.dumps({"reasoning": "r", "battery_fraction": 0.2, "curtail": False,
                     "confidence": "low", "explanation_for_operator": "e"})
 
 INTERVAL_KEYS = {"time", "price_eur_mwh", "break_even", "demand_mw", "production_mw", "solar_mw", "wind_mw",
-                 "soc_mwh", "decision", "guard", "settlement", "control"}
+                 "soc_mwh", "decision", "guard", "settlement", "control", "explanation"}
 FORECAST_KEYS = {"time", "price_eur_mwh", "break_even", "demand_mw", "production_mw", "solar_mw", "wind_mw"}
 
 

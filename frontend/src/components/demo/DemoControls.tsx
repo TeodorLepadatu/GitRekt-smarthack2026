@@ -60,6 +60,11 @@ export function DemoControls() {
         <button type="button" className={cn(btn, "text-ink-2")} disabled={busy} onClick={() => reset.mutate()}>
           Restart at 00:00
         </button>
+        {dayOver && (
+          <a href="#report" className={cn(btn, "text-ink-2")}>
+            See the day report
+          </a>
+        )}
         {nextDay.isError && <span className="text-bad">{nextDay.error.message}</span>}
         <span className="ml-auto hidden text-xs text-ink-3 md:inline">
           {sim.date ? `${sim.date} · ` : ""}

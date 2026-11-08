@@ -13,10 +13,11 @@ export const qk = {
   flags: ["flags"] as const,
   audit: ["audit"] as const,
   control: ["control"] as const,
+  report: ["report"] as const,
 };
 
 /** Queries that change after every interval, refreshed together with goals and metrics. */
-const PER_INTERVAL = [qk.state, qk.goals, qk.metrics, qk.alerts, qk.upcoming, qk.flags, qk.audit];
+const PER_INTERVAL = [qk.state, qk.goals, qk.metrics, qk.alerts, qk.upcoming, qk.flags, qk.audit, qk.report];
 
 /** Fallback polling in case the stream drops; the SSE stream does the real-time work. */
 const POLL_MS = 30_000;
@@ -54,6 +55,9 @@ export const useAlerts = () => useQuery({ queryKey: qk.alerts, queryFn: api.aler
 export const useUpcoming = () => useQuery({ queryKey: qk.upcoming, queryFn: () => api.upcoming(8), refetchInterval: POLL_MS });
 export const useFlags = () => useQuery({ queryKey: qk.flags, queryFn: api.flags, refetchInterval: POLL_MS });
 export const useAudit = () => useQuery({ queryKey: qk.audit, queryFn: () => api.audit(200), refetchInterval: POLL_MS });
+export const useReport = () => useQuery({ queryKey: qk.report, queryFn: api.report, refetchInterval: POLL_MS });
+/** The report's closing paragraph written by the AI (one LLM call: takes a while). */
+export const useReportSummary = () => useMutation({ mutationFn: api.reportSummary });
 
 /** A mutation that refreshes the operator desk (and anything else listed) once it is done. */
 function useDeskMutation<V, R>(fn: (v: V) => Promise<R>, keys: readonly (readonly string[])[]) {

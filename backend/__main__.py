@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> None:
     backend = Backend(store, llm_call=llm_call, battery=settings.battery, start_soc_mwh=args.start_soc,
                       day_factory=day_factory, log_path=args.log, operator_log_dir=args.operator_log_dir or None,
                       max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import,
-                      next_day=next_day)
+                      next_day=next_day, report_llm=goal_llm)
     if args.date:
         backend.date = args.date
     if args.start != "00:00":

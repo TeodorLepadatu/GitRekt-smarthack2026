@@ -36,6 +36,8 @@ from battery import BatteryConfig
 from common import finite_float, goal_config_dict
 from feature_builder import PriceCurve, SiteForecast, break_even_at
 
+from .explain import explain
+
 SOURCES = ("llm", "fallback", "operator")  # operator = an override, hold or rejection, or a Day-tab plan
 CONFIDENCES = ("low", "medium", "high")
 # loop/day.py control actions and control/ autonomy modes: types.ts ControlAction and AutonomyMode
@@ -91,11 +93,23 @@ def _split(production_mw: float, solar: Optional[float], wind: Optional[float]) 
 # one interval
 
 
-def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
+def _goal_defs(runner: Any) -> list[dict[str, Any]]:
+    """The runner's goals ({id, source_text, ...}), to name them in explanations."""
+    try:
+        return [g for g in goal_config_dict(getattr(runner, "goal_config", None)).get("goals") or []
+                if isinstance(g, Mapping)]
+    except Exception:
+        return []
+
+
+def interval_payload(record: Mapping[str, Any], *, p_max_mw: Optional[float] = None,
+                     goals: Optional[Sequence[Mapping[str, Any]]] = None) -> dict[str, Any]:
     """One settled interval as the dashboard's ``Interval``.
 
     ``record`` is what :meth:`loop.DayRunner.step` returns (or a line of its
     JSONL log). This is also the payload of the SSE ``cycle`` event.
+    ``p_max_mw`` (the battery's rated power) and ``goals`` (to name them) make
+    the ``explanation`` exact; without them the defaults are used.
     """
     rec = record if isinstance(record, Mapping) else {}
     features = rec.get("features") if isinstance(rec.get("features"), Mapping) else {}
@@ -142,7 +156,17 @@ def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
             "mode": _one_of(control.get("mode"), AUTONOMY_MODES, "autonomous"),
             "proposed_mw": _opt(control.get("proposed_mw")),
         },
+        "explanation": _explanation(rec, p_max_mw, goals),
     }
+
+
+def _explanation(rec: Mapping[str, Any], p_max_mw: Optional[float],
+                 goals: Optional[Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+    try:
+        return explain(rec, p_max_mw=p_max_mw, goals=list(goals or []))
+    except Exception:  # an explanation is never worth an error
+        return {"summary": "", "facts": [], "value_eur": 0.0, "safety": None, "ai_note": None,
+                "ai_note_dropped": False}
 
 
 def forecast_payload(
@@ -183,9 +207,10 @@ def day_payload(runner: Any) -> dict[str, Any]:
     if curve is None and day is not None:
         curve = PriceCurve(day.prices)
 
-    intervals: list[dict[str, Any]] = [interval_payload(r) for r in records]
+    cfg = getattr(runner, "cfg", None) or BatteryConfig()
+    goals = _goal_defs(runner)
+    intervals: list[dict[str, Any]] = [interval_payload(r, p_max_mw=cfg.p_max_mw, goals=goals) for r in records]
     if day is not None and curve is not None:
-        cfg = getattr(runner, "cfg", None) or BatteryConfig()
         stored = _num(getattr(getattr(runner, "sim", None), "stored_mwh", None), cfg.e_min_mwh)
         for i in range(len(intervals), day.n):
             intervals.append(forecast_payload(
@@ -220,7 +245,8 @@ def state_payload(runner: Any, *, running: bool = False, speed: float = 0.0) -> 
         "capacity_mwh": _num(cfg.capacity_mwh),
         "max_power_mw": _num(cfg.p_max_mw),
         "profit_today_eur": _num(profit),
-        "current": interval_payload(records[-1]) if records else None,
+        "current": interval_payload(records[-1], p_max_mw=cfg.p_max_mw, goals=_goal_defs(runner))
+                   if records else None,
         "sim": {"running": bool(running), "speed": _num(speed)},
     }
 

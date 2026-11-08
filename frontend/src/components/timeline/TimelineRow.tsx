@@ -2,7 +2,8 @@ import { Fragment, useState } from "react";
 import { useFlag, useUnflag } from "@/api/hooks";
 import type { DecisionFlag, Goal, Interval } from "@/api/types";
 import { actionWord, SourceMark } from "@/components/common/marks";
-import { actionKind, actionShort, confidenceLabel, controlText, fallbackReasonText, fmtEur, fmtMw, rulesText } from "@/lib/labels";
+import { ExplanationFacts } from "@/components/common/Explanation";
+import { actionKind, actionShort, confidenceLabel, controlText, explanationText, fallbackReasonText, fmtEur, fmtMw, rulesText } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 const PROPOSER: Record<Interval["decision"]["source"], string> = { llm: "AI", fallback: "backup rules", operator: "operator" };
@@ -117,7 +118,7 @@ export function TimelineRow({ iv, goals, open, onToggle, maxPowerMw, flag }: Pro
           {kind !== "hold" && ` ${fmtMw(Math.abs(sp))}`}
         </td>
         <td className="py-3.5 pr-4">
-          {iv.decision.explanation_for_operator}
+          {explanationText(iv)}
           {(ctrl || fb || notes.length > 0) && (
             <span className="mt-0.5 block text-sm text-ink-3">
               {[ctrl, fb, ...notes].filter(Boolean).join(". ")}.
@@ -141,6 +142,7 @@ export function TimelineRow({ iv, goals, open, onToggle, maxPowerMw, flag }: Pro
               {iv.guard.clipped && `, safety set ${fmtMw(sp)}`}
               {iv.guard.curtail_mw > 0 && ` · ${fmtMw(iv.guard.curtail_mw)} switched off`}
             </p>
+            <ExplanationFacts iv={iv} className="mb-3 max-w-[75ch]" />
             {iv.decision.source === "operator" ? (
               <p className="max-w-[75ch] text-ink-2">
                 {iv.decision.reasoning || iv.decision.explanation_for_operator} The safety layer still checked it.

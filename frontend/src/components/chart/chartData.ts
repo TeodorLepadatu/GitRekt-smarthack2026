@@ -1,4 +1,5 @@
 import { isDecided, type DayResponse, type Goal } from "@/api/types";
+import { explanationText } from "@/lib/labels";
 import { indexToTime, timeToIndex } from "@/lib/utils";
 
 /**
@@ -37,7 +38,7 @@ export function buildRows(day: DayResponse): ChartRow[] {
       wind: s?.wind_mw ?? null,
       demand: s?.demand_mw ?? null,
       setpoint: cur && isDecided(cur) ? cur.guard.battery_setpoint_mw : null,
-      explanation: cur && isDecided(cur) ? cur.decision.explanation_for_operator : null,
+      explanation: cur && isDecided(cur) ? explanationText(cur) : null,
     });
   }
   return rows;

@@ -4,6 +4,7 @@ import type {
   AuditEntry,
   Autonomy,
   ControlState,
+  DayReport,
   DayResponse,
   DecisionFlag,
   Goal,
@@ -11,6 +12,7 @@ import type {
   Interval,
   Metrics,
   RelaxGoalResponse,
+  ReportSummary,
   StateSnapshot,
   UpcomingResponse,
 } from "./types";
@@ -85,6 +87,8 @@ export const api = {
   // operator desk
   alerts: () => request<Alert[]>("GET", "/api/alerts"),
   ignoreAlert: (id: string) => request<unknown>("POST", `/api/alerts/${encodeURIComponent(id)}/ignore`),
+  report: () => request<DayReport>("GET", "/api/report"),
+  reportSummary: () => request<ReportSummary>("POST", "/api/report/summary"),
   relaxGoal: (id: string) => request<RelaxGoalResponse>("POST", `/api/goals/${encodeURIComponent(id)}/relax`),
   upcoming: (n = 8) => request<UpcomingResponse>("GET", `/api/upcoming?n=${n}`),
   setPlan: (time: string, battery_fraction: number, note = "") =>

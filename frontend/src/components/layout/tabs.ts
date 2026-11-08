@@ -1,4 +1,4 @@
-export type TabId = "now" | "day" | "goals" | "decisions" | "log";
+export type TabId = "now" | "day" | "goals" | "decisions" | "report" | "log";
 
 export const TABS: { id: TabId; label: string; title: string; intro: string }[] = [
   { id: "now", label: "Now", title: "Now", intro: "" },
@@ -19,6 +19,12 @@ export const TABS: { id: TabId; label: string; title: string; intro: string }[] 
     label: "Decisions",
     title: "Decision log",
     intro: "Every quarter-hour decision since 00:00, latest first. Open a row to read the AI's reasoning, or flag a decision you disagree with.",
+  },
+  {
+    id: "report",
+    label: "Report",
+    title: "Day report",
+    intro: "What the battery did today, why, and what it was worth. Every figure comes from the settled intervals; print it or save it as a PDF.",
   },
   {
     id: "log",
