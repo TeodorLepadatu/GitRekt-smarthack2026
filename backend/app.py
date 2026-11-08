@@ -10,6 +10,9 @@
     POST   /api/sim/run {speed} speed 0 pauses
     POST   /api/sim/reset       back to 00:00
     GET    /api/health
+    GET    /api/live            live-data demo status (404 unless started with --live-demo)
+    POST   /api/live/fetch {hours}  scrape + retrain + re-forecast the next hour(s) (202; 409 if busy)
+    POST   /api/live/reset      the demo's data back to its start hour
 """
 from __future__ import annotations
 
@@ -35,7 +38,11 @@ class RunIn(BaseModel):
     speed: float = Field(default=60, ge=0, le=100_000)
 
 
-def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
+class FetchIn(BaseModel):
+    hours: float = Field(default=1.0, gt=0, le=24)
+
+
+def create_app(backend: Backend, *, heartbeat_s: float = 15.0, live_demo=None) -> FastAPI:
     app = FastAPI(title="Energy agent backend", version="1.0")
     app.state.backend = backend
     # The Vite dev server proxies /api; CORS also lets the dashboard call the API directly.
@@ -44,6 +51,31 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict:
         return {"status": "ok"}
+
+    def _demo():
+        if live_demo is None:
+            raise HTTPException(404, "the live-data demo is off (start the backend with --live-demo)")
+        return live_demo
+
+    @app.get("/api/live")
+    def live_status() -> dict:
+        return _demo().status()
+
+    @app.post("/api/live/fetch", status_code=202)
+    def live_fetch(body: FetchIn | None = None) -> dict:
+        from .live_demo import DemoBusy, DemoDone
+        try:
+            return _demo().fetch((body or FetchIn()).hours)
+        except (DemoBusy, DemoDone) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/live/reset", status_code=202)
+    def live_reset() -> dict:
+        from .live_demo import DemoBusy
+        try:
+            return _demo().reset()
+        except DemoBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/state")
     def state() -> dict:

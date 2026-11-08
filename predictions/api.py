@@ -19,12 +19,16 @@ Timestamps are unix seconds (or milliseconds, auto-detected) or ISO-8601 strings
 (naive = UTC), snapped down to the 15-min grid.
 `issued_at` (the forecast's "now") defaults to just after the latest known data.
 `format`: "json" (default) or "csv" (the predictions table as a CSV download).
+
+With PREDICTIONS_LIVE=1 the API serves the live loop's data and retrained models
+(predictions/live.py) and reloads them whenever the loop writes new ones.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +40,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 
-from predictions.core import MAX_LEAD_STEPS, STEP, load_data
+from predictions.core import MAX_LEAD_STEPS, STEP, active_dataset_path, active_model_path, load_data
 from predictions.demand_model import DemandForecaster
 from predictions.production_model import ProductionForecaster
 
@@ -47,20 +51,40 @@ CSV_ROOT = Path(__file__).resolve().parent     # CSV files served by /csv live u
 
 MODELS: dict[str, DemandForecaster | ProductionForecaster] = {}
 LOAD_ERRORS: dict[str, str] = {}
+_LOADED: dict[str, tuple] = {}          # what MODELS was loaded from: path -> mtime
+_RELOAD_LOCK = threading.Lock()
+
+
+def _sources() -> dict[str, tuple]:
+    models_dir = os.environ.get("PREDICTIONS_MODELS_DIR")   # optional override of predictions/models
+    paths = {"data": active_dataset_path()}                 # live files only with PREDICTIONS_LIVE=1
+    for key, cls in (("demand", DemandForecaster), ("production", ProductionForecaster)):
+        paths[key] = Path(models_dir) / f"{cls.NAME}.pkl" if models_dir else active_model_path(cls.NAME)
+    return {k: (str(p), p.stat().st_mtime_ns if p.exists() else 0) for k, p in paths.items()}
 
 
 def _load_models() -> None:
-    MODELS.clear()
-    LOAD_ERRORS.clear()
-    data = load_data()
-    models_dir = os.environ.get("PREDICTIONS_MODELS_DIR")   # optional override of predictions/models
+    sources = _sources()
+    data = load_data(Path(sources["data"][0]))
+    models, errors = {}, {}
     for key, cls in (("demand", DemandForecaster), ("production", ProductionForecaster)):
-        path = Path(models_dir) / f"{cls.NAME}.pkl" if models_dir else cls.default_path()
+        path = Path(sources[key][0])
         try:
-            MODELS[key] = cls.load(path, data=data)
+            models[key] = cls.load(path, data=data)
         except FileNotFoundError:
-            LOAD_ERRORS[key] = (f"{path} not found - run "
-                                "predictions/train_and_evaluate.ipynb to train and save it")
+            errors[key] = (f"{path} not found - run "
+                           "predictions/train_and_evaluate.ipynb to train and save it")
+    MODELS.clear(); MODELS.update(models)          # noqa: E702  (swap in one step)
+    LOAD_ERRORS.clear(); LOAD_ERRORS.update(errors)  # noqa: E702
+    _LOADED.clear(); _LOADED.update(sources)        # noqa: E702
+
+
+def _reload_if_changed() -> None:
+    """Pick up the live loop's new data and models (checked per request; a stat call or two)."""
+    if _LOADED and _sources() != _LOADED:
+        with _RELOAD_LOCK:
+            if _sources() != _LOADED:
+                _load_models()
 
 
 @asynccontextmanager
@@ -119,6 +143,7 @@ def _timestamps(req: ForecastRequest) -> np.ndarray:
 
 
 def _model(key: str):
+    _reload_if_changed()
     if key not in MODELS:
         raise HTTPException(503, LOAD_ERRORS.get(key, f"{key} model not loaded"))
     return MODELS[key]
@@ -156,7 +181,9 @@ def _response(key: str, df: pd.DataFrame, issued: int, fmt: str = "json"):
 # --------------------------------------------------------------------------- #
 @app.get("/health")
 def health() -> dict:
-    out = {"status": "ok" if len(MODELS) == 2 else "degraded", "errors": LOAD_ERRORS, "models": {}}
+    _reload_if_changed()
+    out = {"status": "ok" if len(MODELS) == 2 else "degraded", "errors": LOAD_ERRORS, "models": {},
+           "sources": {k: v[0] for k, v in _LOADED.items()}}
     now = int(datetime.now(timezone.utc).timestamp())
     for key, m in MODELS.items():
         issued = m.last_known_ts + STEP

@@ -1,4 +1,4 @@
-import type { AddGoalResponse, DayResponse, Goal, Interval, Metrics, StateSnapshot } from "./types";
+import type { AddGoalResponse, DayResponse, Goal, Interval, LiveDemoStatus, Metrics, StateSnapshot } from "./types";
 
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === "true";
 
@@ -56,6 +56,9 @@ export const api = {
   metrics: () => request<Metrics>("GET", "/api/metrics"),
   simRun: (speed: number) => request<unknown>("POST", "/api/sim/run", { speed }),
   simReset: () => request<unknown>("POST", "/api/sim/reset"),
+  liveStatus: () => request<LiveDemoStatus>("GET", "/api/live"),
+  liveFetch: (hours = 1) => request<LiveDemoStatus>("POST", "/api/live/fetch", { hours }),
+  liveReset: () => request<LiveDemoStatus>("POST", "/api/live/reset"),
 };
 
 export type StreamStatus = "connecting" | "live" | "down";

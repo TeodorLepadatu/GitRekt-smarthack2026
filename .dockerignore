@@ -8,3 +8,4 @@ frontend/dist
 data/weather
 predictions/data
 predictions/reports
+predictions/live

@@ -22,6 +22,7 @@ import re
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterable
 
 DATA = Path("data")
 DEFAULT_LOAD = DATA / "total_load_day_ahead_actual" / "total_load_day_ahead_actual_2022-11-07_2026-11-07.csv"
@@ -82,32 +83,42 @@ def clean(value: str) -> str:
     return "" if value.strip() in MISSING else value.strip()
 
 
-def read_load(path: Path) -> dict[datetime, str]:
+def parse_load(lines: Iterable[str]) -> dict[datetime, str]:
+    """A total-load export (file or downloaded text, line by line) -> {UTC start: MW}."""
     out: dict[datetime, str] = {}
-    with path.open(newline="", encoding="utf-8-sig") as fh:
-        reader = csv.DictReader(fh)
-        mtu_col = next(c for c in reader.fieldnames if c.startswith("MTU"))
-        for row in reader:
-            ts = utc_start_from_cet(row[mtu_col])
-            if ts in out:
-                raise ValueError(f"Duplicate load timestamp {ts} from {row[mtu_col]!r}")
-            out[ts] = clean(row["Actual Total Load (MW)"])
+    reader = csv.DictReader(lines)
+    mtu_col = next(c for c in reader.fieldnames if c.startswith("MTU"))
+    for row in reader:
+        ts = utc_start_from_cet(row[mtu_col])
+        if ts in out:
+            raise ValueError(f"Duplicate load timestamp {ts} from {row[mtu_col]!r}")
+        out[ts] = clean(row["Actual Total Load (MW)"])
     return out
+
+
+def parse_generation(lines: Iterable[str]) -> dict[datetime, dict[str, str]]:
+    """A generation-per-type export (long format) -> {UTC start: {column: MW}}."""
+    wanted = {v: k for k, v in GENERATION_COLUMNS.items()}
+    out: dict[datetime, dict[str, str]] = {}
+    reader = csv.DictReader(lines)
+    mtu_col = next(c for c in reader.fieldnames if c.startswith("MTU"))
+    for row in reader:
+        col = wanted.get(row["Production Type"])
+        if col is None:
+            continue
+        ts = utc_start_from_utc(row[mtu_col])
+        out.setdefault(ts, {})[col] = clean(row["Generation (MW)"])
+    return out
+
+
+def read_load(path: Path) -> dict[datetime, str]:
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        return parse_load(fh)
 
 
 def read_generation(path: Path) -> dict[datetime, dict[str, str]]:
-    wanted = {v: k for k, v in GENERATION_COLUMNS.items()}
-    out: dict[datetime, dict[str, str]] = {}
     with path.open(newline="", encoding="utf-8-sig") as fh:
-        reader = csv.DictReader(fh)
-        mtu_col = next(c for c in reader.fieldnames if c.startswith("MTU"))
-        for row in reader:
-            col = wanted.get(row["Production Type"])
-            if col is None:
-                continue
-            ts = utc_start_from_utc(row[mtu_col])
-            out.setdefault(ts, {})[col] = clean(row["Generation (MW)"])
-    return out
+        return parse_generation(fh)
 
 
 def main() -> int:

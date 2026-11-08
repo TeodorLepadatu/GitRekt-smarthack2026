@@ -75,6 +75,7 @@ class Backend:
         self._speed = 0.0
         self._pending_goals = False
         self._pending_reset = False
+        self._pending_day: Optional[DayInput] = None
         self._stopped = False
         self._listeners: set[Callable[[dict], None]] = set()
         self._new_day()
@@ -172,6 +173,13 @@ class Backend:
         self.wait_idle()
         return self.sim_status()
 
+    def replace_day(self, day: DayInput) -> None:
+        """New forecasts and measurements for the same day (the live-data demo), applied between
+        two intervals: what has run stays, the intervals still ahead use the new day."""
+        with self._cond:
+            self._pending_day = day
+            self._cond.notify_all()
+
     def advance(self, n: int = 1) -> list[dict]:
         """Run ``n`` intervals right now (paused only). Used to warm up a demo day and by tests."""
         with self._cond:
@@ -218,7 +226,7 @@ class Backend:
         """Wait until the worker has applied pending commands (reset, goals)."""
         end = _time.monotonic() + timeout
         with self._cond:
-            while (self._pending_reset or self._pending_goals) and _time.monotonic() < end:
+            while (self._pending_reset or self._pending_goals or self._pending_day is not None)                     and _time.monotonic() < end:
                 self._cond.wait(0.01)
 
     def close(self) -> None:
@@ -256,6 +264,11 @@ class Backend:
         if self._pending_reset:
             self._new_day()
             self._pending_reset = False
+        if self._pending_day is not None:
+            if self._pending_day.n == self._runner.day.n:   # never raise here: this is the worker thread
+                self._day = self._runner.day = self._pending_day
+                self._publish()
+            self._pending_day = None
         if self._pending_goals:
             self._runner.set_goals(self.goals.config)
             self._pending_goals = False

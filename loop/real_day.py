@@ -195,9 +195,11 @@ def _load_models(models: Optional[Mapping[str, Any]], data: Any = None) -> tuple
         from predictions import DemandForecaster, ProductionForecaster
     except ImportError as exc:  # lightgbm / pandas missing
         raise RealDayError(f"the prediction models cannot be imported ({exc})") from exc
+    from predictions.core import active_model_path
     data = load_dataset() if data is None else data
-    try:
-        return (DemandForecaster.load(data=data), ProductionForecaster.load(data=data))
+    try:  # the live loop's retrained models with PREDICTIONS_LIVE=1, else predictions/models/
+        return tuple(cls.load(active_model_path(cls.NAME), data=data)
+                     for cls in (DemandForecaster, ProductionForecaster))
     except FileNotFoundError as exc:
         raise RealDayError(
             f"{exc} - run predictions/train_and_evaluate.ipynb to train and save the models"
@@ -205,15 +207,26 @@ def _load_models(models: Optional[Mapping[str, Any]], data: Any = None) -> tuple
 
 
 def load_dataset() -> Any:
-    """``predictions/dataset.csv``, with the invalid records already blanked out."""
+    """``predictions/dataset.csv`` (or, with PREDICTIONS_LIVE=1, the live loop's growing copy
+    ``predictions/live/dataset.csv``), with the invalid records already blanked out."""
     try:
-        from predictions.core import load_data
+        from predictions.core import active_dataset_path, load_data
     except ImportError as exc:
         raise RealDayError(f"predictions cannot be imported ({exc})") from exc
     try:
-        return load_data()
+        return load_data(active_dataset_path())
     except FileNotFoundError as exc:
         raise RealDayError(f"{exc} - run predictions/build_dataset.py to build it") from exc
+
+
+def live_signature() -> tuple:
+    """Changes whenever the live loop writes new data or models (PREDICTIONS_LIVE=1)."""
+    try:
+        from predictions.core import active_dataset_path, active_model_path
+    except ImportError:
+        return ()
+    paths = [active_dataset_path(), active_model_path("demand_model"), active_model_path("production_model")]
+    return tuple((str(p), p.stat().st_mtime_ns if p.exists() else 0) for p in paths)
 
 
 def _combine_band(parts: Sequence[tuple[float, float, float]]) -> tuple[float, float]:

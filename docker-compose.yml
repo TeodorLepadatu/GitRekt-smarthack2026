@@ -37,16 +37,39 @@ services:
       dockerfile: Dockerfile
     # A real day: ML 1 + ML 2 forecasts and ENTSO-E prices, decided by the LLM agent.
     # ENERGY_AGENT_DATE picks the day; the default is the last fully measured one.
-    command: python -m backend --host 0.0.0.0 --port 8000 --date ${ENERGY_AGENT_DATE:-2026-11-06}
+    # --live-demo: the dashboard's "Fetch the next hour" button (backend/live_demo.py) replays the
+    # live data on that day: the measured data starts at ENERGY_AGENT_DEMO_START (default 08:00),
+    # each press scrapes the next hour.
+    command: python -m backend --host 0.0.0.0 --port 8000 --date ${ENERGY_AGENT_DATE:-2026-11-06} --live-demo --live-demo-start ${ENERGY_AGENT_DEMO_START:-08:00}
     environment:
       OLLAMA_HOST: http://ollama:11434
       ENERGY_AGENT_MODEL: ${ENERGY_AGENT_MODEL:-qwen3.5:4b}
       ENERGY_AGENT_GOAL_MODEL: ${ENERGY_AGENT_GOAL_MODEL:-qwen3.5:4b}
+      # Use the live loop's data and retrained models (the originals until it has any);
+      # a reset of the day rebuilds it on them.
+      PREDICTIONS_LIVE: "1"
+    volumes:
+      - predictions-live:/app/predictions/live
     depends_on:
       ollama-model:
         condition: service_completed_successfully
     expose:
       - "8000"
+
+  # Every 15 min: scrape the energy data + Open-Meteo, add the new intervals, retrain on all
+  # the data (predictions/live.py). Energy from Transelectrica's public data (no login), or
+  # from ENTSO-E when ENTSOE_API_TOKEN (official API) or ENTSOE_TOKEN (browser token) is set.
+  live:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m predictions.live
+    environment:
+      ENTSOE_API_TOKEN: ${ENTSOE_API_TOKEN:-}
+      ENTSOE_TOKEN: ${ENTSOE_TOKEN:-}
+    volumes:
+      - predictions-live:/app/predictions/live
+    restart: unless-stopped
 
   frontend:
     build:
@@ -61,3 +84,4 @@ services:
 
 volumes:
   ollama-data:
+  predictions-live:

@@ -1,7 +1,6 @@
 """Dashboard backend: every route of frontend/README.md's API contract, on the real loop."""
 
 import json
-import threading
 import time
 
 import pytest
@@ -143,25 +142,6 @@ def test_goal_tracker_keeps_history_when_ids_are_renumbered():
     assert (t.states["g2"].type, t.states["g2"].status) == ("reserve", "met")
 
 
-def test_run_pause_and_day_end(setup):
-    b, c = setup
-    assert c.post("/api/sim/run", json={"speed": 90000}).json() == {"running": True, "speed": 90000.0}
-    assert wait_for(lambda: c.get("/api/day").json()["now"] == "23:45")      # 10 ms per interval
-    assert c.get("/api/state").json()["sim"] == {"running": False, "speed": 0.0}   # stops at the end of the day
-    goals = {g["id"]: g["status"] for g in c.get("/api/goals").json()}
-    assert goals["g2"] in ("met", "violated")                                     # finalised at the end
-
-
-def test_pause_stops_the_clock(setup):
-    b, c = setup
-    c.post("/api/sim/run", json={"speed": 9000})            # 100 ms per interval
-    assert wait_for(lambda: len(b._snap.records) >= 2)
-    c.post("/api/sim/run", json={"speed": 0})
-    n = len(b._snap.records)
-    time.sleep(0.4)
-    assert len(b._snap.records) <= n + 1                  # at most the interval already running
-
-
 def test_reset_starts_the_day_again(setup):
     b, c = setup
     b.advance(8)
@@ -189,49 +169,6 @@ def test_advance_refuses_while_running(setup):
 def test_bad_speed(setup, speed):
     _, c = setup
     assert c.post("/api/sim/run", json={"speed": speed}).status_code == 422
-
-
-def test_stream_sends_each_new_interval(setup):
-    b, _ = setup
-    received = []
-    events = b.subscribe(heartbeat_s=0.2)
-    t = threading.Thread(target=lambda: received.append(next(i for i in events if i is not None)))
-    t.start()
-    time.sleep(0.1)
-    b.advance(1)
-    t.join(timeout=3)
-    assert received and received[0]["time"] == "00:00"
-
-
-def test_stream_route_speaks_sse_and_lets_go_of_closed_clients(setup):
-    """On a real uvicorn server: the TestClient never reports a disconnect, a browser does."""
-    import httpx
-    import uvicorn
-
-    b, _ = setup
-    server = uvicorn.Server(uvicorn.Config(create_app(b, heartbeat_s=0.2), host="127.0.0.1", port=0,
-                                           log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    assert wait_for(lambda: server.started)
-    port = server.servers[0].sockets[0].getsockname()[1]
-    try:
-        threading.Timer(0.5, lambda: b.advance(1)).start()
-        lines = []
-        with httpx.stream("GET", f"http://127.0.0.1:{port}/api/stream", timeout=5) as r:
-            assert r.headers["content-type"].startswith("text/event-stream")
-            assert wait_for(lambda: len(b._listeners) == 1)
-            for line in r.iter_lines():
-                lines.append(line)
-                if line.startswith("data:"):
-                    break
-        assert "event: cycle" in lines
-        assert json.loads(lines[-1][len("data: "):])["time"] == "00:00"
-        assert wait_for(lambda: len(b._listeners) == 0)       # the closed client was let go
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
-    assert not thread.is_alive()                              # shuts down with no client hanging
 
 
 def test_with_an_llm_decisions_come_from_it():

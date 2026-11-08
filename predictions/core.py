@@ -15,6 +15,7 @@ training cut-off.
 
 from __future__ import annotations
 
+import os
 import pickle
 import time
 from pathlib import Path
@@ -25,8 +26,8 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
-DATASET_CSV = HERE / "dataset.csv"
-MODELS_DIR = HERE / "models"
+DATASET_CSV = HERE / "dataset.csv"     # the original training data: never written by the live loop
+MODELS_DIR = HERE / "models"           # the original models, behind the README results and plots
 
 STEP, DAY = 900, 86_400
 WEEK = 7 * DAY
@@ -62,6 +63,43 @@ def load_data(path: Path = DATASET_CSV) -> pd.DataFrame:
             "other_production", "renewables"]
     df.loc[df["valid"] == 0, cols] = np.nan
     return df
+
+
+# --------------------------------------------------------------------------- #
+# Live data (predictions/live.py): a growing copy of the dataset and models retrained on it.
+# Opt-in with PREDICTIONS_LIVE=1, so the notebook, the tests and the original results
+# keep using dataset.csv and models/.
+# --------------------------------------------------------------------------- #
+def live_dir() -> Path:
+    return Path(os.environ.get("PREDICTIONS_LIVE_DIR") or HERE / "live")
+
+
+def live_enabled() -> bool:
+    return os.environ.get("PREDICTIONS_LIVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def active_dataset_path() -> Path:
+    """The live dataset when live mode is on and it exists, else the original dataset.csv."""
+    p = live_dir() / "dataset.csv"
+    return p if live_enabled() and p.exists() else DATASET_CSV
+
+
+def replace_file(src: Path, dst: Path, attempts: int = 10) -> None:
+    """os.replace, retried: on Windows it fails while another process has dst open."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.5)
+
+
+def active_model_path(name: str) -> Path:
+    """The live model when live mode is on and it exists, else the original in models/."""
+    p = live_dir() / "models" / f"{name}.pkl"
+    return p if live_enabled() and p.exists() else MODELS_DIR / f"{name}.pkl"
 
 
 class History:
@@ -292,6 +330,47 @@ class BaseForecaster:
         self.calibration = self._calibrate(end, seed, early)
         return self
 
+    def refit(self, data: pd.DataFrame | None = None, samples_per_target: int = 4, seed: int = 0,
+              verbose: bool = True):
+        """A new forecaster trained on all of `data` (default: this one's history).
+
+        Keeps this model's trees per quantile and range calibration instead of
+        early-stopping and recalibrating, so it takes about half the time of fit().
+        The live loop uses it to learn from every new interval and runs fit() daily.
+        """
+        new = type(self)(calibration={k: list(v) for k, v in self.calibration.items()},
+                         data=self.data if data is None else data)
+        t_min, end = int(new.data.timestamp.min()), int(new.data.timestamp.max()) + STEP
+        for target in self.SPECS:
+            t0 = time.time()
+            rounds = dict(self.models[target]["rounds"])
+            X_all, y_all = new._xy(target, *new._pairs(t_min, end, samples_per_target, seed))
+            final = {q: lgb.train(dict(LGB_PARAMS, objective="quantile", alpha=q, seed=seed),
+                                  lgb.Dataset(X_all, y_all), num_boost_round=rounds[q]) for q in QUANTILES}
+            new.models[target] = {"features": list(X_all.columns), "boosters": final,
+                                  "rounds": rounds, "n_samples": len(y_all)}
+            if verbose:
+                print(f"[{self.NAME}] refit {target:<18} {len(y_all):>9,} samples   {time.time() - t0:5.0f} s")
+        return new
+
+    def update(self, data: pd.DataFrame | None = None, days: int = 30, decay_rate: float = 0.9,
+               samples_per_target: int = 4, seed: int = 0):
+        """A new forecaster that has learnt from the last `days` of `data`, in seconds.
+
+        LightGBM's Booster.refit keeps every tree and moves each leaf value towards
+        what the new data says: new = decay_rate * old + (1 - decay_rate) * fitted.
+        refit() and fit() rebuild the trees from all the data instead (minutes).
+        """
+        new = type(self)(calibration={k: list(v) for k, v in self.calibration.items()},
+                         data=self.data if data is None else data)
+        end = int(new.data.timestamp.max()) + STEP
+        for target in self.SPECS:
+            m = self.models[target]
+            X, y = new._xy(target, *new._pairs(end - days * DAY, end, samples_per_target, seed))
+            boosters = {q: m["boosters"][q].refit(X[m["features"]], y, decay_rate=decay_rate) for q in QUANTILES}
+            new.models[target] = {**m, "boosters": boosters}
+        return new
+
     def _pairs(self, t_from, t_to, n_per, seed):
         ts = self.data.timestamp[(self.data.timestamp >= t_from) & (self.data.timestamp < t_to)].to_numpy()
         T = np.repeat(ts, n_per)
@@ -394,9 +473,11 @@ class BaseForecaster:
     def save(self, path: Path | str | None = None) -> Path:
         path = Path(path or self.default_path())
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "wb") as f:   # write then rename: a reader never sees half a file
             pickle.dump({"kind": self.NAME, "models": self.models, "calibration": self.calibration,
                          "trained_until": int(self.data.timestamp.max())}, f)
+        replace_file(tmp, path)
         return path
 
     @classmethod

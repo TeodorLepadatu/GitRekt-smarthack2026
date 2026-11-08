@@ -227,3 +227,6 @@ logs/
 
 # Runtime state: the active goals saved by goal_parser.GoalStore (config.Settings.goals_path)
 data/goals.json
+
+# Live loop output (predictions/live.py): growing dataset copy, retrained models, status
+predictions/live/

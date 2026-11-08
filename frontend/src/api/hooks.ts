@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, subscribeCycles, type StreamStatus } from "./client";
-import type { AddGoalResponse, DayResponse, Goal, StateSnapshot } from "./types";
+import type { AddGoalResponse, DayResponse, Goal, LiveDemoStatus, StateSnapshot } from "./types";
 
 export const qk = {
   state: ["state"] as const,
   day: ["day"] as const,
   goals: ["goals"] as const,
   metrics: ["metrics"] as const,
+  live: ["live"] as const,
 };
 
 /** Fallback polling in case the stream drops; the SSE stream does the real-time work. */
@@ -109,4 +110,50 @@ function stripDecision<T extends object>(s: T) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { decision, guard, settlement, soc_mwh, ...rest } = s as Record<string, unknown>;
   return rest as T;
+}
+
+/**
+ * The live-data demo's status. Polls every second while a step runs; when a step
+ * finishes (the day has new data and forecasts), refreshes everything else.
+ * Errors (404: demo off) are not retried, so the control just stays hidden.
+ */
+export function useLiveDemo() {
+  const qc = useQueryClient();
+  const q = useQuery<LiveDemoStatus>({
+    queryKey: qk.live,
+    queryFn: api.liveStatus,
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.busy ? 1000 : query.state.error ? false : 15_000),
+  });
+  const seen = useRef<string | null>(null);
+  useEffect(() => {
+    const d = q.data;
+    if (!d || d.busy) return;
+    const key = `${d.steps}|${d.data_until}`;
+    if (seen.current !== null && seen.current !== key) {
+      qc.invalidateQueries({ queryKey: qk.day });
+      qc.invalidateQueries({ queryKey: qk.state });
+      qc.invalidateQueries({ queryKey: qk.metrics });
+    }
+    seen.current = key;
+  }, [q.data, qc]);
+  return q;
+}
+
+export function useLiveFetch() {
+  const qc = useQueryClient();
+  return useMutation<LiveDemoStatus, Error, number | undefined>({
+    mutationFn: (hours) => api.liveFetch(hours ?? 1),
+    onSuccess: (s) => qc.setQueryData(qk.live, s),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.live }),
+  });
+}
+
+export function useLiveReset() {
+  const qc = useQueryClient();
+  return useMutation<LiveDemoStatus, Error>({
+    mutationFn: api.liveReset,
+    onSuccess: (s) => qc.setQueryData(qk.live, s),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.live }),
+  });
 }

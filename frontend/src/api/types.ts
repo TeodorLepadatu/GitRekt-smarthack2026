@@ -190,3 +190,29 @@ export interface Metrics {
   /** Intervals whose settled import went over the cap. */
   import_limit_exceeded_intervals?: number;
 }
+
+/** GET /api/live: the live-data demo (backend started with --live-demo). */
+export interface LiveDemoStatus {
+  date: string;
+  /** What the demo is doing: scraping the next hour, the models learning from it, re-forecasting. */
+  phase: "starting" | "idle" | "scraping" | "training" | "forecasting";
+  busy: boolean;
+  /** Local time the day's measured data reaches ("HH:MM", "24:00" when the day is complete). */
+  data_until: string;
+  data_until_utc: string;
+  measured_intervals: number;
+  can_fetch: boolean;
+  /** Hours fetched since the demo started. */
+  steps: number;
+  last: null | {
+    from: string;
+    to: string;
+    source: string;
+    added: number;
+    scrape_seconds: number;
+    train_seconds: number;
+    trained_until_utc: string;
+    total_seconds: number;
+  };
+  error: string | null;
+}

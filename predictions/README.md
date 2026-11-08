@@ -36,6 +36,8 @@ uvicorn predictions.api:app --port 8000               # docs at http://localhost
 | `models/` | Trained models (created by the notebook) |
 | `reports/` | Backtest results: `eval_2026.csv` and plots |
 | `data/weather/` | Saved weather downloads, so `build_dataset.py` doesn't download again |
+| `live.py` | The live loop: scrapes every 15 min, adds the new intervals, retrains (see Live data) |
+| `live/` | The live loop's output, not in git: growing `dataset.csv`, retrained `models/`, `status.json` |
 
 ## Data
 
@@ -309,3 +311,95 @@ Run `train_and_evaluate.ipynb` top to bottom. It rebuilds the 2026 backtest and 
 `models/*.pkl`. To add newer data first, extend `dataset.csv` with the new energy rows and run
 `python predictions/build_dataset.py --refresh` to fill in their weather. `--refresh` is needed
 because the saved download for the current year stops at the old end date.
+
+## Live data
+
+`live.py` keeps the models learning from new data. Every 15 minutes (5 minutes after each
+quarter hour, once ENTSO-E has usually published the interval that just ended) it:
+
+1. **Scrapes the energy data** for the last 2 days (more after downtime, up to 30), from the
+   first of these that is available:
+   - **ENTSO-E's official API** when `ENTSOE_API_TOKEN` is set (`entsoe_api.py` in the repo root).
+   - **ENTSO-E's website export** with the browser token in `ENTSOE_TOKEN`, through the same code
+     as the scrapers (`entsoe_export.py`, parsed by the root `build_dataset.py`). That token
+     expires after about 15 minutes.
+   - **Transelectrica** otherwise, with no login (`transelectrica.py`). Its public "Grafic SEN"
+     chart exports the national load and production per type about every 10 minutes, averaged
+     here into 15-minute intervals. ENTSO-E's Romanian data comes from Transelectrica.
+
+   Against `dataset.csv` (725 intervals, 30 Oct – 7 Nov 2026), Transelectrica matches the
+   training data closely:
+
+   | Series | Correlation | Typical gap |
+   |---|---|---|
+   | Load | 1.000 | 0.3% |
+   | Solar | 1.000 | 4.9% |
+   | Wind | 0.995 | 1.2% |
+   | Hydro | 1.000 | 1.1% |
+   | Nuclear | 1.000 | 2 MW |
+
+   Gas reads about 80 MW higher and coal about 120 MW higher: ENTSO-E's lignite has reporting
+   gaps, and Transelectrica's coal includes hard coal. Total production is therefore about 4.6%
+   higher. Two columns have to be derived:
+   - **Hydro** comes as one total and is split into the dataset's two hydro columns at the last
+     week's ratio.
+   - **Storage** is what Transelectrica's total production holds beyond the listed types.
+
+   Transelectrica only adds intervals after the end of the data. It never replaces ENTSO-E rows.
+2. **Fetches the weather** from the Open-Meteo Historical Forecast API at the same 13 sites. It
+   matches the weather already in `dataset.csv` to rounding.
+3. **Builds the rows exactly like the training rows**: total production, the `valid` flag and the
+   calendar columns. An interval is added only once its load and every production type are
+   published. Recent intervals are read again, so ENTSO-E's corrections replace the old values.
+4. **The models learn from every new interval**, whenever one was added or corrected:
+   - **every tick, an update** (`BaseForecaster.update`, about 5 seconds). LightGBM's
+     `Booster.refit` keeps every tree and moves its leaf values towards the latest 30 days.
+   - **once a day, a full fit** on all the data, 2026 included (about 7 minutes). The trees are
+     rebuilt, with early stopping and range recalibration.
+
+   Training uses half the CPU cores by default (`--threads`). `refit()` (rebuild the trees from
+   all the data, keeping the tree counts; about 3.5 minutes) is also available.
+5. **Writes `live/status.json`**: what the tick fetched, added and corrected, where the data ends,
+   the last training and any error. A failed fetch (offline, expired token) is recorded and tried
+   again on the next tick. A failed training is retried on the next tick.
+
+```powershell
+python -m predictions.live               # run forever (Transelectrica, or ENTSO-E if a token is set)
+python -m predictions.live --once        # one tick (Task Scheduler, cron)
+python -m predictions.live --no-train    # collect data only
+python transelectrica.py                 # check Transelectrica: prints the latest intervals
+python entsoe_api.py                     # check an ENTSO-E API token: prints the latest rows
+```
+
+To get an API token (free), register on transparency.entsoe.eu and email
+transparency@entsoe.eu with the subject "Restful API access". Once access is granted, generate the
+token under My Account Settings.
+
+**The original results stay as they are.** The loop writes only to `live/`, which starts as a
+copy of `dataset.csv`. It never writes to `dataset.csv`, `models/`, `reports/` or the notebook,
+so the 2026 backtest, the plots and the tables above are kept for the presentation. The notebook
+and the tests read only the originals.
+
+**The app uses the live files only with `PREDICTIONS_LIVE=1`.** `docker-compose.yml` sets it and
+runs the loop as the `live` service; the token is passed with
+`ENTSOE_API_TOKEN=... docker compose up --build`; without one it uses Transelectrica. With live mode on:
+- the forecast API reloads the data and models whenever the loop writes new ones;
+- the backend rebuilds its day on the new models at the next reset of the simulation.
+
+Until the loop has trained once, the original models are used, on the live data.
+
+### Live demo in the dashboard
+
+A real-time run adds one interval every 15 minutes, which is too slow to show. With
+`--live-demo` (on in `docker-compose.yml`), the dashboard's demo bar has a **Live data** control
+that replays the live loop on the day being run. The day's measured data starts cut off at 08:00
+(`--live-demo-start`). Each press of **Fetch the next hour** runs the real pipeline for the next
+hour, in about 10–15 seconds:
+
+1. **Scrape:** a real request to Transelectrica and Open-Meteo for that hour.
+2. **Learn:** the models update from the new data.
+3. **Re-forecast:** the rest of the day is forecast again from the new data. The intervals now
+   measured settle on what really happened.
+
+The running simulation keeps everything it has decided. The demo writes only to
+`live/demo/`; **Back to the start** returns to 08:00.

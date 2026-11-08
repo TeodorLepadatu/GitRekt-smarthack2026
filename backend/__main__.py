@@ -22,6 +22,7 @@ from config import Settings
 from goal_parser import GoalParser, GoalStore
 from llm import DecisionAgent, OllamaClient
 from loop import RealDayError, SiteScale, demo_day, real_day
+from loop.real_day import live_signature
 
 from .app import create_app
 from .service import Backend
@@ -47,6 +48,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--plan", action="store_true", help="with --date: settle on the forecasts, not the actuals")
     ap.add_argument("--imbalance", action="store_true",
                     help="with --date: charge for deviating from the promised grid position")
+    ap.add_argument("--live-demo", action="store_true",
+                    help="with --date: the 'Fetch the next hour' demo of the live data (backend/live_demo.py)")
+    ap.add_argument("--live-demo-start", default="08:00", metavar="HH:MM",
+                    help="with --live-demo: the day's data starts cut off here (default 08:00)")
     ap.add_argument("--max-import", type=float, default=None, metavar="MW",
                     help="grid import cap for peak shaving, MW (default: ENERGY_AGENT_MAX_IMPORT_MW, unset = none)")
     args = ap.parse_args(argv)
@@ -65,13 +70,30 @@ def main(argv: list[str] | None = None) -> None:
     if not store.sentences:
         store.set(DEFAULT_GOALS)
 
+    if args.live_demo and not args.date:
+        sys.exit("--live-demo needs --date: the demo replays a past day")
+    demo = None
     if args.date:
-        try:  # built once: a reset replays the same day
-            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan,
-                           imbalance=args.imbalance)
+        def build():
+            return real_day(args.date, scale=SiteScale(), with_actuals=not args.plan, imbalance=args.imbalance)
+
+        try:
+            built = {"day": build(), "sig": live_signature()}
         except RealDayError as exc:
             sys.exit(f"cannot build {args.date}: {exc}")
-        day_factory = lambda: day  # noqa: E731
+
+        def day_factory():
+            """A reset replays the same day, rebuilt if the live loop has new data or models since."""
+            if demo is not None and demo.day is not None:
+                return demo.day                     # the live demo's day, with the hours fetched so far
+            sig = live_signature()
+            if sig != built["sig"]:
+                try:
+                    built.update(day=build(), sig=sig)
+                    logging.getLogger("backend").info("rebuilt %s on the live loop's new data/models", args.date)
+                except RealDayError as exc:
+                    logging.getLogger("backend").warning("kept the previous %s: %s", args.date, exc)
+            return built["day"]
     else:
         day_factory = demo_day
 
@@ -84,7 +106,12 @@ def main(argv: list[str] | None = None) -> None:
         n = backend._runner._index_of(args.start)  # validates the time
         threading.Thread(target=backend.advance, args=(n,), name="warm-up", daemon=True).start()
 
-    uvicorn.run(create_app(backend), host=args.host, port=args.port)
+    if args.live_demo:
+        from .live_demo import LiveDemo
+        demo = LiveDemo(args.date, backend.replace_day, start=args.live_demo_start, scale=SiteScale())
+        demo.start()          # cuts the data at the start hour and swaps that day in, in the background
+
+    uvicorn.run(create_app(backend, live_demo=demo), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
