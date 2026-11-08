@@ -4,6 +4,7 @@ import { USE_MOCKS } from "@/api/client";
 import { useDay, useLiveStream, useStateSnapshot } from "@/api/hooks";
 import { TodayChart } from "@/components/chart/TodayChart";
 import { ApiBanner } from "@/components/common/ApiBanner";
+import { OperatorStrip } from "@/components/control/OperatorStrip";
 import { Reveal } from "@/components/common/Reveal";
 import { DemoControls } from "@/components/demo/DemoControls";
 import { AlertsPanel } from "@/components/desk/AlertsPanel";
@@ -79,7 +80,7 @@ export default function App() {
       />
       <AlertsPanel go={go} />
 
-      <main key={tab} className="flex flex-col gap-12 px-6 pt-10 pb-28 lg:px-12">
+      <main key={tab} className="flex flex-col gap-12 px-6 pt-10 pb-44 lg:px-12">
         {tab !== "now" && <PageIntro tab={tab} />}
 
         {tab === "now" && <NowPage go={go} />}
@@ -121,7 +122,11 @@ export default function App() {
           </>
         )}
       </main>
-      <DemoControls />
+      {/* Operator strip on every tab, the demo controls under it. */}
+      <div className="fixed inset-x-0 bottom-0 z-30">
+        <OperatorStrip />
+        <DemoControls />
+      </div>
     </div>
     </MotionConfig>
   );

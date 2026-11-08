@@ -41,6 +41,7 @@ DEFAULT_TIMEOUT_S = 60.0  # a cycle is 15 min; a 4B model answers in seconds
 # --- sources / fallback reasons (logged, used for the reliability metrics) -----
 SOURCE_LLM = "llm"
 SOURCE_FALLBACK = "fallback"
+SOURCE_OPERATOR = "operator"  # a person at the dashboard set the battery (control/)
 
 REASON_TIMEOUT = "timeout"
 REASON_LLM_ERROR = "llm_error"
@@ -51,6 +52,7 @@ REASON_NOT_OBJECT = "not_a_json_object"
 REASON_MISSING_FIELD = "missing_field"
 REASON_BAD_TYPE = "bad_type"
 REASON_OUT_OF_RANGE = "out_of_range"
+REASON_APPROVAL_TIMEOUT = "approval_timeout"  # the operator did not answer a proposal in time
 
 
 @dataclass

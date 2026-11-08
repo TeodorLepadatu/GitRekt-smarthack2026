@@ -6,7 +6,14 @@
     POST   /api/goals {text}    {goals, question?}
     DELETE /api/goals/{id}
     GET    /api/metrics         Metrics
-    GET    /api/stream          SSE, event "cycle" = one Interval, event "alert" = one Alert just raised
+    GET    /api/stream          SSE: event "cycle" = one Interval, "control" = ControlState, "alert" = one Alert just raised
+    GET    /api/control         ControlState: override, emergency hold, autonomy, pending approval
+    POST   /api/override {setpoint_mw, until}   operator setpoint until HH:MM (still guarded)
+    DELETE /api/override        hand control back to the AI
+    POST   /api/hold            emergency hold: battery idle, no export, until released
+    DELETE /api/hold            release it
+    PUT    /api/autonomy {mode?, max_auto_mw?, ask_on_low_confidence?, timeout_s?}
+    POST   /api/approvals/{id} {approve}         answer the AI's waiting proposal
     POST   /api/sim/run {speed} speed 0 pauses
     POST   /api/sim/reset       back to 00:00
     GET    /api/health
@@ -17,8 +24,8 @@ The operator's desk (backend/desk.py):
     POST   /api/alerts/{id}/ignore        hide it until its condition clears
     POST   /api/goals/{id}/relax          lower a reserve goal to what is still reachable
     GET    /api/upcoming?n=8              {now, slots}: the next intervals' planned action
-    PUT    /api/overrides/{time} {battery_fraction, note}   set an upcoming interval (0 = hold)
-    DELETE /api/overrides/{time}          give it back to the AI
+    PUT    /api/plan/{time} {battery_fraction, note}   set one upcoming interval (0 = hold)
+    DELETE /api/plan/{time}               give it back to the AI
     GET    /api/flags                     DecisionFlag[]
     POST   /api/decisions/{time}/flag {reason}
     DELETE /api/decisions/{time}/flag
@@ -28,12 +35,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from control import ControlError, NoPendingApproval
 
 from .service import Backend, Conflict, GoalNotFound, NotFound
 
@@ -50,6 +59,23 @@ class RunIn(BaseModel):
 
 
 class OverrideIn(BaseModel):
+    setpoint_mw: float              # > 0 charge, < 0 discharge; the range is checked against the battery
+    until: str = Field(pattern=r"^\d{2}:\d{2}$")
+
+
+class AutonomyIn(BaseModel):
+    """Only the fields sent change; the others stay as they are."""
+    mode: Optional[Literal["autonomous", "supervised", "advisory"]] = None
+    max_auto_mw: Optional[float] = Field(default=None, ge=0, le=10_000)
+    ask_on_low_confidence: Optional[bool] = None
+    timeout_s: Optional[float] = Field(default=None, ge=5, le=900)
+
+
+class AnswerIn(BaseModel):
+    approve: bool
+
+
+class PlanIn(BaseModel):
     battery_fraction: float = Field(ge=-1, le=1)
     note: str = Field(default="", max_length=MAX_NOTE)
 
@@ -109,6 +135,43 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
     def metrics() -> dict:
         return backend.metrics()
 
+    @app.get("/api/control")
+    def control() -> dict:
+        return backend.control_state()
+
+    @app.post("/api/override")
+    def set_override(body: OverrideIn) -> dict:
+        try:
+            return backend.set_override(body.setpoint_mw, body.until)
+        except ControlError as exc:
+            raise HTTPException(422, str(exc))
+
+    @app.delete("/api/override")
+    def clear_override() -> dict:
+        return backend.clear_override()
+
+    @app.post("/api/hold")
+    def hold() -> dict:
+        return backend.set_hold(True)
+
+    @app.delete("/api/hold")
+    def release_hold() -> dict:
+        return backend.set_hold(False)
+
+    @app.put("/api/autonomy")
+    def set_autonomy(body: AutonomyIn) -> dict:
+        try:
+            return backend.set_autonomy(**body.model_dump())
+        except ControlError as exc:
+            raise HTTPException(422, str(exc))
+
+    @app.post("/api/approvals/{proposal_id}")
+    def answer_approval(proposal_id: int, body: AnswerIn) -> dict:
+        try:
+            return backend.answer_approval(proposal_id, body.approve)
+        except NoPendingApproval:
+            raise HTTPException(409, "that proposal is no longer waiting for an answer")
+
     @app.post("/api/sim/run")
     def sim_run(body: RunIn) -> dict:
         return backend.run(body.speed)
@@ -136,13 +199,13 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
     def upcoming(n: int = Query(default=8, ge=1, le=96)) -> dict:
         return backend.upcoming(n)
 
-    @app.put("/api/overrides/{time}")
-    def set_override(time: str, body: OverrideIn) -> dict:
-        return _desk(backend.set_override, time, body.battery_fraction, body.note)
+    @app.put("/api/plan/{time}")
+    def set_plan(time: str, body: PlanIn) -> dict:
+        return _desk(backend.set_plan, time, body.battery_fraction, body.note)
 
-    @app.delete("/api/overrides/{time}")
-    def clear_override(time: str) -> dict:
-        _desk(backend.clear_override, time)
+    @app.delete("/api/plan/{time}")
+    def clear_plan(time: str) -> dict:
+        _desk(backend.clear_plan, time)
         return {"ok": True}
 
     @app.get("/api/flags")
@@ -169,31 +232,25 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=200)
 
-        def listener(event: str):
-            def on_event(payload: dict) -> None:          # called from the worker thread
-                def put() -> None:
-                    if not queue.full():                  # a slow client must not hold memory
-                        queue.put_nowait((event, payload))
-                loop.call_soon_threadsafe(put)
-            return on_event
-
-        on_interval, on_alert = listener("cycle"), listener("alert")
+        def on_event(event: str, data: dict) -> None:     # called from the worker or an HTTP thread
+            def put() -> None:
+                if not queue.full():                      # a slow client must not hold memory
+                    queue.put_nowait((event, data))
+            loop.call_soon_threadsafe(put)
 
         async def events() -> AsyncIterator[str]:
-            backend.add_listener(on_interval)
-            backend.add_alert_listener(on_alert)
+            backend.add_listener(on_event)
             try:
                 yield "retry: 3000\n\n"                   # browser reconnect delay
                 while not await request.is_disconnected():
                     try:
-                        event, payload = await asyncio.wait_for(queue.get(), timeout=heartbeat_s)
+                        event, data = await asyncio.wait_for(queue.get(), timeout=heartbeat_s)
                     except asyncio.TimeoutError:
                         yield ": ping\n\n"                # keeps proxies from closing the connection
                         continue
-                    yield f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
             finally:
-                backend.remove_listener(on_interval)
-                backend.remove_alert_listener(on_alert)
+                backend.remove_listener(on_event)
 
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, subscribeCycles, type StreamStatus } from "./client";
-import type { AddGoalResponse, Alert, DayResponse, Goal, StateSnapshot } from "./types";
+import { api, subscribeStream, type StreamStatus } from "./client";
+import type { AddGoalResponse, Alert, ControlState, DayResponse, Goal, Interval, StateSnapshot } from "./types";
 
 export const qk = {
   state: ["state"] as const,
@@ -12,6 +12,7 @@ export const qk = {
   upcoming: ["upcoming"] as const,
   flags: ["flags"] as const,
   audit: ["audit"] as const,
+  control: ["control"] as const,
 };
 
 /** Queries that change after every interval, refreshed together with goals and metrics. */
@@ -24,6 +25,30 @@ export const useStateSnapshot = () => useQuery({ queryKey: qk.state, queryFn: ap
 export const useDay = () => useQuery({ queryKey: qk.day, queryFn: api.day, refetchInterval: POLL_MS });
 export const useGoals = () => useQuery({ queryKey: qk.goals, queryFn: api.goals, refetchInterval: POLL_MS });
 export const useMetrics = () => useQuery({ queryKey: qk.metrics, queryFn: api.metrics, refetchInterval: POLL_MS });
+export const useControl = () => useQuery({ queryKey: qk.control, queryFn: api.control, refetchInterval: POLL_MS });
+
+/**
+ * One mutation per operator command. Every command answers with the new
+ * ControlState, which replaces the cached one at once.
+ */
+function useControlCommand<V>(fn: (v: V) => Promise<ControlState>) {
+  const qc = useQueryClient();
+  return useMutation<ControlState, Error, V>({
+    mutationFn: fn,
+    onSuccess: (c) => {
+      qc.setQueryData(qk.control, c);
+      // the command is in the audit log, and a standing override changes what is planned
+      qc.invalidateQueries({ queryKey: qk.audit });
+      qc.invalidateQueries({ queryKey: qk.upcoming });
+    },
+  });
+}
+
+export const useSetOverride = () => useControlCommand(api.setOverride);
+export const useClearOverride = () => useControlCommand<void>(api.clearOverride);
+export const useSetHold = () => useControlCommand<boolean>((on) => (on ? api.setHold() : api.releaseHold()));
+export const useSetAutonomy = () => useControlCommand(api.setAutonomy);
+export const useAnswerApproval = () => useControlCommand(api.answerApproval);
 
 export const useAlerts = () => useQuery({ queryKey: qk.alerts, queryFn: api.alerts, refetchInterval: POLL_MS });
 export const useUpcoming = () => useQuery({ queryKey: qk.upcoming, queryFn: () => api.upcoming(8), refetchInterval: POLL_MS });
@@ -41,12 +66,13 @@ function useDeskMutation<V, R>(fn: (v: V) => Promise<R>, keys: readonly (readonl
 
 export const useIgnoreAlert = () => useDeskMutation((id: string) => api.ignoreAlert(id), [qk.alerts]);
 export const useRelaxGoal = () => useDeskMutation((id: string) => api.relaxGoal(id), [qk.alerts, qk.goals, qk.upcoming]);
-export const useSetOverride = () =>
+/** One interval set ahead of time on the Day tab ("Skip" / "Change"). */
+export const useSetPlan = () =>
   useDeskMutation(
-    (v: { time: string; fraction: number; note?: string }) => api.setOverride(v.time, v.fraction, v.note),
+    (v: { time: string; fraction: number; note?: string }) => api.setPlan(v.time, v.fraction, v.note),
     [qk.upcoming],
   );
-export const useClearOverride = () => useDeskMutation((time: string) => api.clearOverride(time), [qk.upcoming]);
+export const useClearPlan = () => useDeskMutation((time: string) => api.clearPlan(time), [qk.upcoming]);
 export const useFlag = () => useDeskMutation((v: { time: string; reason: string }) => api.flag(v.time, v.reason), [qk.flags]);
 export const useUnflag = () => useDeskMutation((time: string) => api.unflag(time), [qk.flags]);
 
@@ -97,8 +123,9 @@ export function useSimReset() {
 }
 
 /**
- * Listen to the SSE "cycle" stream and patch the cached day/state in place,
- * then refresh the aggregates (goals, metrics) from the API.
+ * Listen to the SSE stream: "cycle" patches the cached day/state in place and
+ * then refreshes the aggregates (goals, metrics); "control" replaces the
+ * cached ControlState, so a proposal waiting for approval shows at once.
  */
 export function useLiveStream(): StreamStatus {
   const qc = useQueryClient();
@@ -106,7 +133,7 @@ export function useLiveStream(): StreamStatus {
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = subscribeCycles((iv) => {
+    const onCycle = (iv: Interval) => {
       qc.setQueryData<DayResponse>(qk.day, (day) => {
         if (!day) return day;
         const intervals = day.intervals.map((s) => (s.time === iv.time ? iv : s));
@@ -126,9 +153,14 @@ export function useLiveStream(): StreamStatus {
           PER_INTERVAL.forEach((k) => qc.invalidateQueries({ queryKey: k }));
         }, 400);
       }
-    }, setStatus, (alert) => {
+    };
+    const unsubscribe = subscribeStream({
+      onCycle,
+      onControl: (c) => qc.setQueryData(qk.control, c),
       // A new alert: show it at once; the list itself is refreshed with the interval.
-      qc.setQueryData<Alert[]>(qk.alerts, (list) => (list && !list.some((a) => a.id === alert.id) ? [alert, ...list] : list));
+      onAlert: (alert) =>
+        qc.setQueryData<Alert[]>(qk.alerts, (list) => (list && !list.some((a) => a.id === alert.id) ? [alert, ...list] : list)),
+      onStatus: setStatus,
     });
     return () => {
       unsubscribe();
@@ -142,6 +174,6 @@ export function useLiveStream(): StreamStatus {
 function stripDecision<T extends object>(s: T) {
   if (!("decision" in s)) return s;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { decision, guard, settlement, soc_mwh, ...rest } = s as Record<string, unknown>;
+  const { decision, guard, settlement, soc_mwh, control, ...rest } = s as Record<string, unknown>;
   return rest as T;
 }

@@ -20,6 +20,23 @@ are known the loop checks the cap again on those (a real site's controller reads
 the meter), sending any extra discharge back through the guard. Physics and the
 hard goals still have the last word; an import the battery cannot cover is
 recorded as ``import_cap_unmet`` and counted by the settlement.
+
+Operator control (``control``, a ``control.OperatorControl``): before the AI is
+asked, the operator's command for the interval is checked.
+
+    emergency hold  battery idle, the exportable surplus switched off; the AI,
+                    the hard goals and the balancing are all skipped
+    override        the operator's setpoint, through the guard like any decision
+                    (physics, hard goals and the import cap still apply)
+    otherwise       the AI decides; if the autonomy policy asks for it, the loop
+                    waits for the operator's approval, and holds (through the
+                    guard) on a rejection or a timeout
+
+Each record's ``control`` says which of these happened (``action``), under
+which autonomy ``mode``, and what the AI proposed when it had to wait
+(``proposed_mw``). Only an AI decision that runs is balanced against the
+forecast error; an operator's setpoint is run as given, and any deviation it
+causes is settled as usual.
 """
 from __future__ import annotations
 
@@ -31,6 +48,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from battery import BatteryConfig
 from common import finite_float
+from control import APPROVED, REJECTED, SUPERSEDED, TIMEOUT, Command, OperatorControl
 from feature_builder import PriceCurve, SiteForecast, build_features, hhmm
 from guard import GuardResult, guard
 from pipeline import CycleResult, run_cycle
@@ -38,10 +56,12 @@ from settlement import DayLedger
 from settlement.settle import ImbalancePrices, scheduled_position_mwh
 from simulator import SiteSimulator
 from validator import Decision, fallback_decision
-from validator.schema import DEFAULT_TIMEOUT_S
+from validator.schema import DEFAULT_TIMEOUT_S, REASON_APPROVAL_TIMEOUT, SOURCE_FALLBACK, SOURCE_OPERATOR
 
 REASON_FEATURE_ERROR = "feature_error"  # the feature builder failed; the LLM was not called
-SOURCE_OPERATOR = "operator"            # a human set this interval's action ahead of time
+RULE_EMERGENCY_HOLD = "emergency_hold"
+# control actions after which the AI's decision runs (and is balanced against the forecast error)
+AI_ACTIONS = ("auto", "approved")
 
 FeatureBuilder = Callable[..., Mapping[str, Any]]
 
@@ -106,9 +126,11 @@ class DayRunner:
         on_interval: Optional[Callable[[dict], None]] = None,
         log_path: Optional[str] = None,
         max_import_mw: Optional[float] = None,
+        control: Optional[OperatorControl] = None,
         override_for: Optional[Callable[[str], Optional[Mapping[str, Any]]]] = None,
     ):
         self.cfg = battery or BatteryConfig()
+        self.control = control  # None = no operator: the AI decides every interval
         self.day = day
         expected = round(24 / self.cfg.interval_h)
         if day.n != expected:
@@ -159,15 +181,22 @@ class DayRunner:
         warnings: list[str] = []
         forecast = self.day.forecasts[i]
 
-        features, cycle = self._decide(t, forecast, warnings)
+        features, cycle, control = self._decide(t, forecast, warnings)
         demand, production = self._actual(i, forecast, warnings)
-        imbalance, scheduled, setpoint = self._balance(i, cycle, forecast, demand, production, t, warnings)
-        cycle, setpoint = self._shave(i, cycle, setpoint, demand, production, t, warnings)
+        imbalance, scheduled, setpoint = self._balance(i, cycle, forecast, demand, production, t, warnings,
+                                                       adjust=control["action"] in AI_ACTIONS)
+        if control["action"] == "hold":
+            # Idle, nothing exported: asked to curtail, the simulator switches off exactly the
+            # exportable surplus it measures. The import cap is not chased: that would move the battery.
+            setpoint = SimpleNamespace(battery_setpoint_mw=0.0, curtail_mw=max(0.0, production - demand))
+        else:
+            cycle, setpoint = self._shave(i, cycle, setpoint, demand, production, t, warnings)
         site = self.sim.step(setpoint, demand, production, time=t)
         record = self.ledger.record(cycle, features, site, imbalance=imbalance, scheduled_mwh=scheduled)
 
         record["features"] = dict(features)
         record["site"] = site.to_dict()
+        record["control"] = control
         record["loop_warnings"] = warnings
         self.records.append(record)
         self.index += 1
@@ -239,31 +268,92 @@ class DayRunner:
 
     # ------------------------------------------------------------------ steps
 
-    def _decide(self, t: str, forecast: Any, warnings: list[str]) -> tuple[Mapping[str, Any], Any]:
-        """Features and the pipeline's decision. If the features cannot be built, the
-        rule-based fallback decides and the guard still enforces the hard goals."""
+    def _decide(self, t: str, forecast: Any, warnings: list[str]) -> tuple[Mapping[str, Any], Any, dict]:
+        """Features, the interval's decision, and who made it (the record's ``control``).
+
+        The operator's command comes first; without one the AI decides, and the
+        autonomy policy may make that decision wait for the operator's approval.
+        """
+        features, error = self._features(t, forecast, warnings)
+        mode = "autonomous" if self.control is None else self.control.autonomy.mode
+        if self.control is not None:
+            command = self.control.command_for(t)
+            if command is not None:      # emergency hold or a standing override wins
+                return features, self._command_cycle(command, features), _control(command.kind, mode)
+        planned = self._override(t, warnings)
+        if planned is not None:          # an action set for this one interval (Day tab)
+            decision = operator_decision(planned)
+            return features, CycleResult(None, decision, self._guard(decision, features)), _control("override", mode)
+        if self.control is None:
+            return features, self._ai_cycle(features, error), _control("auto", "autonomous")
+
+        cycle = self._ai_cycle(features, error)
+        proposed = finite_float(getattr(cycle.setpoint, "battery_setpoint_mw", None)) or 0.0
+        if not self.control.autonomy.needs_review(proposed, cycle.decision.confidence):
+            return features, cycle, _control("auto", mode)
+        verdict = self.control.review(time=t, setpoint_mw=proposed, source=cycle.decision.source,
+                                      confidence=cycle.decision.confidence,
+                                      explanation_for_operator=cycle.decision.explanation_for_operator)
+        if verdict == APPROVED:
+            return features, cycle, _control(APPROVED, mode, proposed)
+        if verdict == SUPERSEDED:
+            command = self.control.command_for(t)
+            if command is not None:
+                return features, self._command_cycle(command, features), _control(command.kind, mode, proposed)
+        # Rejected, or nobody answered: hold. Through the guard, so the hard goals still hold too.
+        action = REJECTED if verdict == REJECTED else TIMEOUT
+        if action == REJECTED:
+            decision = _operator_decision(0.0, self.cfg, f"The operator rejected the AI's proposal to "
+                                                         f"{_verb(proposed)}: battery held.")
+        else:
+            decision = Decision(0.0, False, SOURCE_FALLBACK, fallback_reason=REASON_APPROVAL_TIMEOUT,
+                                explanation_for_operator=f"No answer to the AI's proposal to {_verb(proposed)} "
+                                                         f"in time: battery held.")
+        return features, CycleResult(cycle.prompt, decision, self._guard(decision, features)), \
+            _control(action, mode, proposed)
+
+    def _features(self, t: str, forecast: Any, warnings: list[str]) -> tuple[Mapping[str, Any], Optional[str]]:
+        """The feature builder's output, or a minimal stand-in and the error when it fails."""
         try:
             prices = self.day.imbalance[self.index] if self.day.imbalance is not None else None
-            features = self.feature_builder(
+            return self.feature_builder(
                 time=t, forecast=forecast, prices=self.curve, stored_mwh=self.sim.stored_mwh,
                 goal_config=self.goal_config, battery=self.cfg,
                 imbalance_short_eur_mwh=None if prices is None else prices.short_eur_mwh,
                 imbalance_long_eur_mwh=None if prices is None else prices.long_eur_mwh,
-            )
+            ), None
         except Exception as exc:  # the cycle must go on
             warnings.append(f"features could not be built ({exc}); rule-based fallback")
-            features = self._minimal_features(t, forecast)
-            decision = fallback_decision(features, REASON_FEATURE_ERROR, str(exc)[:200])
-            return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg,
-                                                               max_import_mw=self.max_import_mw))
-        override = self._override(t, warnings)
-        if override is not None:
-            decision = operator_decision(override)
-            return features, CycleResult(None, decision, guard(decision, features, self.goal_config, self.cfg,
-                                                               max_import_mw=self.max_import_mw))
-        return features, run_cycle(features, self.goal_config, llm_call=self.llm_call,
-                                   battery=self.cfg, timeout_s=self.timeout_s,
-                                   max_import_mw=self.max_import_mw)
+            return self._minimal_features(t, forecast), str(exc)[:200]
+
+    def _ai_cycle(self, features: Mapping[str, Any], error: Optional[str]) -> CycleResult:
+        """The pipeline's decision. If the features could not be built, the rule-based
+        fallback decides and the guard still enforces the hard goals."""
+        if error is not None:
+            decision = fallback_decision(features, REASON_FEATURE_ERROR, error)
+            return CycleResult(None, decision, self._guard(decision, features))
+        return run_cycle(features, self.goal_config, llm_call=self.llm_call,
+                         battery=self.cfg, timeout_s=self.timeout_s,
+                         max_import_mw=self.max_import_mw)
+
+    def _command_cycle(self, command: Command, features: Mapping[str, Any]) -> CycleResult:
+        """The operator's command as a cycle; the AI is not asked."""
+        if command.kind == "hold":
+            decision = _operator_decision(0.0, self.cfg, "Emergency hold: the battery is idle and nothing is "
+                                                         "exported until the operator releases it.")
+            stored = self.sim.stored_mwh
+            surplus = max(0.0, finite_float(features.get("net_mw")) or 0.0)
+            return CycleResult(None, decision, GuardResult(
+                battery_setpoint_mw=0.0, curtail_mw=round(surplus, 4), clipped=False,
+                applied_rules=[RULE_EMERGENCY_HOLD], source=SOURCE_OPERATOR,
+                expected_soc_after_mwh=round(stored, 4),
+            ))
+        decision = _operator_decision(command.setpoint_mw, self.cfg,
+                                      f"Operator override: {_verb(command.setpoint_mw)} until {command.until}.")
+        return CycleResult(None, decision, self._guard(decision, features))
+
+    def _guard(self, decision: Any, features: Mapping[str, Any]) -> GuardResult:
+        return guard(decision, features, self.goal_config, self.cfg, max_import_mw=self.max_import_mw)
 
     def _override(self, t: str, warnings: list[str]) -> Optional[Mapping[str, Any]]:
         if self.override_for is None:
@@ -276,7 +366,7 @@ class DayRunner:
 
     def _balance(
         self, i: int, cycle: Any, forecast: Any, demand: float, production: float,
-        t: str, warnings: list[str],
+        t: str, warnings: list[str], *, adjust: bool = True,
     ) -> tuple[Optional[ImbalancePrices], Optional[float], Any]:
         """Hold the promised grid position, so far as the guard and the battery allow.
 
@@ -287,7 +377,8 @@ class DayRunner:
         whatever they refuse stays as a deviation and is paid for.
 
         Returns the interval's imbalance prices, the promised position, and the
-        setpoint to run. Without imbalance prices nothing is adjusted.
+        setpoint to run. Without imbalance prices, or with ``adjust`` off (an
+        operator's setpoint, run as given), nothing is adjusted.
         """
         prices = self.day.imbalance[i] if self.day.imbalance is not None else None
         if prices is None:
@@ -303,6 +394,8 @@ class DayRunner:
             forecast_demand_mw=f_demand, forecast_production_mw=f_production,
             battery_mw=commanded, curtail_mw=curtail, cfg=self.cfg,
         )
+        if not adjust:
+            return prices, scheduled, cycle.setpoint
         wanted = balancing_setpoint_mw(
             scheduled_mwh=scheduled, demand_mw=demand, production_mw=production,
             curtail_mw=curtail, cfg=self.cfg,
@@ -410,8 +503,23 @@ class DayRunner:
         return i
 
 
+def _control(action: str, mode: str, proposed_mw: Optional[float] = None) -> dict:
+    """A record's ``control``: who set the battery, under which autonomy mode."""
+    return {"action": action, "mode": mode,
+            "proposed_mw": None if proposed_mw is None else round(proposed_mw, 4)}
+
+
+def _operator_decision(setpoint_mw: float, cfg: BatteryConfig, explanation: str) -> Decision:
+    """The operator's setpoint, in the shape the guard and the ledger expect from the AI."""
+    fraction = setpoint_mw / cfg.p_max_mw if cfg.p_max_mw > 0 else 0.0
+    # Not rounded: 2 MW of 3 must come out of the guard as 2 MW, not 2.0001.
+    return Decision(battery_fraction=max(-1.0, min(1.0, fraction)), curtail=False,
+                    source=SOURCE_OPERATOR, confidence="high", explanation_for_operator=explanation)
+
+
 def operator_decision(override: Mapping[str, Any]) -> Decision:
-    """The operator's planned action as a Decision. The guard still checks it."""
+    """An action the operator planned for one interval (Day tab, "Skip"/"Change") as a Decision.
+    The guard still checks it."""
     fraction = finite_float(override.get("battery_fraction")) or 0.0
     fraction = round(max(-1.0, min(1.0, fraction)), 4)
     if fraction > 0:
@@ -426,6 +534,15 @@ def operator_decision(override: Mapping[str, Any]) -> Decision:
         reasoning=f"The operator set this interval ahead of time: {action}." + (f" Note: {note}" if note else ""),
         explanation_for_operator=f"Operator override: {action}.",
     )
+
+
+def _verb(mw: float) -> str:
+    """'charge 2.00 MW' / 'discharge 1.50 MW' / 'hold'."""
+    if mw > 0.005:
+        return f"charge {mw:.2f} MW"
+    if mw < -0.005:
+        return f"discharge {-mw:.2f} MW"
+    return "hold"
 
 
 def _forecast_values(forecast: Any) -> tuple[Optional[float], Optional[float]]:

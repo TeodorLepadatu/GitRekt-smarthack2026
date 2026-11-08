@@ -2,8 +2,10 @@ import { Fragment, useState } from "react";
 import { useFlag, useUnflag } from "@/api/hooks";
 import type { DecisionFlag, Goal, Interval } from "@/api/types";
 import { actionWord, SourceMark } from "@/components/common/marks";
-import { actionKind, actionShort, confidenceLabel, fallbackReasonText, fmtEur, fmtMw, proposerText, rulesText } from "@/lib/labels";
+import { actionKind, actionShort, confidenceLabel, controlText, fallbackReasonText, fmtEur, fmtMw, rulesText } from "@/lib/labels";
 import { cn } from "@/lib/utils";
+
+const PROPOSER: Record<Interval["decision"]["source"], string> = { llm: "AI", fallback: "backup rules", operator: "operator" };
 
 interface Props {
   iv: Interval;
@@ -89,6 +91,7 @@ export function TimelineRow({ iv, goals, open, onToggle, maxPowerMw, flag }: Pro
   const kind = actionKind(sp);
   const notes = rulesText(iv.guard.applied_rules, goals);
   const fb = fallbackReasonText(iv.decision);
+  const ctrl = controlText(iv.control);
   const profit = iv.settlement.profit_eur;
   const proposed = iv.decision.battery_fraction * maxPowerMw;
 
@@ -115,9 +118,9 @@ export function TimelineRow({ iv, goals, open, onToggle, maxPowerMw, flag }: Pro
         </td>
         <td className="py-3.5 pr-4">
           {iv.decision.explanation_for_operator}
-          {(fb || notes.length > 0) && (
+          {(ctrl || fb || notes.length > 0) && (
             <span className="mt-0.5 block text-sm text-ink-3">
-              {[fb, ...notes].filter(Boolean).join(". ")}.
+              {[ctrl, fb, ...notes].filter(Boolean).join(". ")}.
             </span>
           )}
         </td>
@@ -134,17 +137,19 @@ export function TimelineRow({ iv, goals, open, onToggle, maxPowerMw, flag }: Pro
           <td colSpan={4} className="pb-4 text-sm">
             <p className="num mb-2 text-sm text-ink-3">
               price €{iv.price_eur_mwh.toFixed(2)}/MWh · stored after {iv.soc_mwh.toFixed(2)} MWh ·{" "}
-              {proposerText(iv.decision)} proposed {fmtMw(proposed)}
+              {PROPOSER[iv.decision.source]} set {fmtMw(proposed)}
               {iv.guard.clipped && `, safety set ${fmtMw(sp)}`}
               {iv.guard.curtail_mw > 0 && ` · ${fmtMw(iv.guard.curtail_mw)} switched off`}
             </p>
-            {iv.decision.source === "llm" ? (
+            {iv.decision.source === "operator" ? (
+              <p className="max-w-[75ch] text-ink-2">
+                {iv.decision.reasoning || iv.decision.explanation_for_operator} The safety layer still checked it.
+              </p>
+            ) : iv.decision.source === "llm" ? (
               <p className="max-w-[75ch] font-serif text-lg leading-relaxed">
                 <span className="label mr-2 align-middle">AI reasoning, {confidenceLabel[iv.decision.confidence].toLowerCase()}</span>
                 {iv.decision.reasoning || "The AI gave no reasoning for this decision."}
               </p>
-            ) : iv.decision.source === "operator" ? (
-              <p className="max-w-[75ch] text-ink-2">{iv.decision.reasoning} The safety layer still checked it.</p>
             ) : (
               <p className="max-w-[75ch] text-ink-2">
                 No usable AI answer for this interval, so the backup rules decided from the price and your goals.

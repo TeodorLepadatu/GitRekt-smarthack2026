@@ -25,7 +25,7 @@ export function DemoControls() {
   const btn = "underline-offset-2 hover:underline disabled:opacity-50";
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-rule-strong bg-wash text-sm" aria-label="Simulation controls">
+    <div className="border-t border-rule-strong bg-wash text-sm" aria-label="Simulation controls">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-6 py-2.5 text-base lg:px-12">
         <span className="label">Simulation</span>
         <button type="button" className={cn(btn, "font-semibold")} disabled={busy} onClick={() => run.mutate(sim.running ? 0 : speed)}>

@@ -2,12 +2,14 @@ import type {
   AddGoalResponse,
   Alert,
   AuditEntry,
+  Autonomy,
+  ControlState,
   DayResponse,
   DecisionFlag,
   Goal,
+  IntervalPlan,
   Interval,
   Metrics,
-  Override,
   RelaxGoalResponse,
   StateSnapshot,
   UpcomingResponse,
@@ -70,14 +72,23 @@ export const api = {
   simRun: (speed: number) => request<unknown>("POST", "/api/sim/run", { speed }),
   simReset: () => request<unknown>("POST", "/api/sim/reset"),
 
+  control: () => request<ControlState>("GET", "/api/control"),
+  setOverride: (body: { setpoint_mw: number; until: string }) => request<ControlState>("POST", "/api/override", body),
+  clearOverride: () => request<ControlState>("DELETE", "/api/override"),
+  setHold: () => request<ControlState>("POST", "/api/hold"),
+  releaseHold: () => request<ControlState>("DELETE", "/api/hold"),
+  setAutonomy: (body: Partial<Autonomy>) => request<ControlState>("PUT", "/api/autonomy", body),
+  answerApproval: ({ id, approve }: { id: number; approve: boolean }) =>
+    request<ControlState>("POST", `/api/approvals/${id}`, { approve }),
+
   // operator desk
   alerts: () => request<Alert[]>("GET", "/api/alerts"),
   ignoreAlert: (id: string) => request<unknown>("POST", `/api/alerts/${encodeURIComponent(id)}/ignore`),
   relaxGoal: (id: string) => request<RelaxGoalResponse>("POST", `/api/goals/${encodeURIComponent(id)}/relax`),
   upcoming: (n = 8) => request<UpcomingResponse>("GET", `/api/upcoming?n=${n}`),
-  setOverride: (time: string, battery_fraction: number, note = "") =>
-    request<Override>("PUT", `/api/overrides/${encodeURIComponent(time)}`, { battery_fraction, note }),
-  clearOverride: (time: string) => request<unknown>("DELETE", `/api/overrides/${encodeURIComponent(time)}`),
+  setPlan: (time: string, battery_fraction: number, note = "") =>
+    request<IntervalPlan>("PUT", `/api/plan/${encodeURIComponent(time)}`, { battery_fraction, note }),
+  clearPlan: (time: string) => request<unknown>("DELETE", `/api/plan/${encodeURIComponent(time)}`),
   flags: () => request<DecisionFlag[]>("GET", "/api/flags"),
   flag: (time: string, reason: string) => request<DecisionFlag>("POST", `/api/decisions/${encodeURIComponent(time)}/flag`, { reason }),
   unflag: (time: string) => request<unknown>("DELETE", `/api/decisions/${encodeURIComponent(time)}/flag`),
@@ -86,26 +97,35 @@ export const api = {
 
 export type StreamStatus = "connecting" | "live" | "down";
 
+export interface StreamHandlers {
+  /** A new interval was decided ("cycle" event). */
+  onCycle: (iv: Interval) => void;
+  /** The operator control changed: an override, the hold, autonomy or a pending approval ("control" event). */
+  onControl: (c: ControlState) => void;
+  /** The operator desk raised an alert ("alert" event). */
+  onAlert?: (a: Alert) => void;
+  onStatus: (s: StreamStatus) => void;
+}
+
 /**
- * Subscribe to the SSE stream: "cycle" (one Interval) and "alert" (one Alert just raised).
- * Returns an unsubscribe function. EventSource reconnects by itself; onStatus reports the connection state.
+ * Subscribe to the SSE stream. Returns an unsubscribe function.
+ * EventSource reconnects by itself; onStatus reports the connection state.
  */
-export function subscribeCycles(
-  onCycle: (iv: Interval) => void,
-  onStatus: (s: StreamStatus) => void,
-  onAlert: (a: Alert) => void = () => {},
-): () => void {
+export function subscribeStream({ onCycle, onControl, onAlert, onStatus }: StreamHandlers): () => void {
   if (USE_MOCKS) {
     let unsub: (() => void) | null = null;
     let cancelled = false;
     import("@/mocks/server").then(({ mockBackend }) => {
       if (cancelled) return;
       onStatus("live");
-      const off = mockBackend.subscribe(
-        (iv) => onCycle(structuredClone(iv)),
-        (a) => onAlert(structuredClone(a)),
-      );
-      unsub = () => void off();
+      const offCycle = mockBackend.subscribe((iv) => onCycle(structuredClone(iv)));
+      const offControl = mockBackend.subscribeControl((c) => onControl(structuredClone(c)));
+      const offAlert = mockBackend.subscribeAlerts((a) => onAlert?.(structuredClone(a)));
+      unsub = () => {
+        offCycle();
+        offControl();
+        offAlert();
+      };
     });
     return () => {
       cancelled = true;
@@ -116,19 +136,16 @@ export function subscribeCycles(
   const es = new EventSource("/api/stream");
   es.onopen = () => onStatus("live");
   es.onerror = () => onStatus(es.readyState === EventSource.CLOSED ? "down" : "connecting");
-  es.addEventListener("cycle", (ev) => {
-    try {
-      onCycle(JSON.parse((ev as MessageEvent).data) as Interval);
-    } catch {
-      /* ignore malformed event */
-    }
-  });
-  es.addEventListener("alert", (ev) => {
-    try {
-      onAlert(JSON.parse((ev as MessageEvent).data) as Alert);
-    } catch {
-      /* ignore malformed event */
-    }
-  });
+  const on = <T,>(event: string, fn: (data: T) => void) =>
+    es.addEventListener(event, (ev) => {
+      try {
+        fn(JSON.parse((ev as MessageEvent).data) as T);
+      } catch {
+        /* ignore malformed event */
+      }
+    });
+  on("cycle", onCycle);
+  on("control", onControl);
+  on<Alert>("alert", (a) => onAlert?.(a));
   return () => es.close();
 }

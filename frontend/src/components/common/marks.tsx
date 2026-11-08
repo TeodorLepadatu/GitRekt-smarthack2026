@@ -31,9 +31,9 @@ export const goalBar: Record<GoalStatus, string> = {
   violated: "bg-bad",
 };
 
-const sourceTone: Record<SourceKind, string> = { ai: "text-ink", backup: "text-warn", safety: "text-info", operator: "text-ai" };
+const sourceTone: Record<SourceKind, string> = { ai: "text-ink", backup: "text-warn", operator: "text-ink-2", safety: "text-info" };
 /** Plain glyphs, so who-decided reads even in black and white. */
-const sourceGlyph: Record<SourceKind, string> = { ai: "●", backup: "▲", safety: "◆", operator: "■" };
+const sourceGlyph: Record<SourceKind, string> = { ai: "●", backup: "▲", operator: "■", safety: "◆" };
 
 export function SourceMark({ interval, className }: { interval: Pick<Interval, "decision" | "guard">; className?: string }) {
   const kind = sourceKind(interval);

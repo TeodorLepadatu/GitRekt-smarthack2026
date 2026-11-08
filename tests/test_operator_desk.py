@@ -86,11 +86,11 @@ def test_upcoming_override_runs_as_operator_and_is_audited(desk):
     assert up["now"] == "00:30" and [s["time"] for s in up["slots"]] == ["00:45", "01:00", "01:15", "01:30"]
     assert all(s["override"] is None and "setpoint_mw" in s["planned"] for s in up["slots"])
 
-    assert c.put("/api/overrides/01:00", json={"battery_fraction": 0, "note": "skip"}).status_code == 200
+    assert c.put("/api/plan/01:00", json={"battery_fraction": 0, "note": "skip"}).status_code == 200
     assert c.get("/api/upcoming?n=2").json()["slots"][1]["override"]["battery_fraction"] == 0
-    assert c.put("/api/overrides/00:15", json={"battery_fraction": 0}).status_code == 409   # already decided
-    assert c.put("/api/overrides/01:07", json={"battery_fraction": 0}).status_code == 404   # not an interval
-    assert c.put("/api/overrides/01:00", json={"battery_fraction": 2}).status_code == 422
+    assert c.put("/api/plan/00:15", json={"battery_fraction": 0}).status_code == 409   # already decided
+    assert c.put("/api/plan/01:07", json={"battery_fraction": 0}).status_code == 404   # not an interval
+    assert c.put("/api/plan/01:00", json={"battery_fraction": 2}).status_code == 422
 
     b.advance(2)
     iv = next(x for x in c.get("/api/day").json()["intervals"] if x["time"] == "01:00")
@@ -116,9 +116,9 @@ def test_the_interval_being_decided_cannot_be_overridden(tmp_path):
         worker = threading.Thread(target=b.advance, args=(1,))
         worker.start()
         assert started.wait(5)
-        assert c.put("/api/overrides/00:00", json={"battery_fraction": 0}).status_code == 409
+        assert c.put("/api/plan/00:00", json={"battery_fraction": 0}).status_code == 409
         assert c.get("/api/upcoming?n=2").json()["slots"][0]["time"] == "00:15"
-        assert c.put("/api/overrides/00:15", json={"battery_fraction": 0}).status_code == 200
+        assert c.put("/api/plan/00:15", json={"battery_fraction": 0}).status_code == 200
         release.set()
         worker.join(5)
         assert c.get("/api/upcoming?n=1").json()["slots"][0]["time"] == "00:15"
@@ -129,7 +129,7 @@ def test_the_interval_being_decided_cannot_be_overridden(tmp_path):
 
 def test_override_still_obeys_the_guard(desk):
     b, c, _ = desk
-    c.put("/api/overrides/00:00", json={"battery_fraction": -1})      # discharge into an empty-ish battery
+    c.put("/api/plan/00:00", json={"battery_fraction": -1})      # discharge into an empty-ish battery
     b.advance(1)
     iv = c.get("/api/day").json()["intervals"][0]
     assert iv["decision"]["source"] == "operator"
@@ -138,9 +138,9 @@ def test_override_still_obeys_the_guard(desk):
 
 def test_clear_override_gives_the_interval_back(desk):
     b, c, _ = desk
-    c.put("/api/overrides/00:15", json={"battery_fraction": 1})
-    assert c.delete("/api/overrides/00:15").json() == {"ok": True}
-    assert c.delete("/api/overrides/00:15").status_code == 404
+    c.put("/api/plan/00:15", json={"battery_fraction": 1})
+    assert c.delete("/api/plan/00:15").json() == {"ok": True}
+    assert c.delete("/api/plan/00:15").status_code == 404
     b.advance(2)
     assert c.get("/api/day").json()["intervals"][1]["decision"]["source"] == "fallback"
 
@@ -188,16 +188,29 @@ def test_audit_survives_a_restart(desk, tmp_path):
 def test_sse_carries_alert_events(desk):
     b, c, _ = desk
     seen = []
-    b.add_alert_listener(seen.append)
+    b.add_listener(lambda event, data: seen.append(data["kind"]) if event == "alert" else None)
     b.advance(3)
-    assert [a["kind"] for a in seen] == ["fallback_streak"]
+    assert seen == ["fallback_streak"]
+
+
+def test_a_standing_override_wins_over_a_plan_and_both_are_audited(desk):
+    b, c, _ = desk
+    c.put("/api/plan/00:00", json={"battery_fraction": 1})
+    assert c.post("/api/override", json={"setpoint_mw": -1.0, "until": "00:15"}).status_code == 200
+    b.advance(1)
+    iv = c.get("/api/day").json()["intervals"][0]
+    assert iv["control"]["action"] == "override" and iv["guard"]["battery_setpoint_mw"] <= 0   # his, not the plan
+    c.post("/api/hold")
+    c.delete("/api/hold")
+    actions = [e["action"] for e in c.get("/api/audit").json()]
+    assert actions[:3] == ["emergency_hold", "emergency_hold", "control_override"] and "override_set" in actions
 
 
 def test_desk_payloads_match_types_ts(desk, contract):
     from tests.test_dashboard_contract import _check_interface
     b, c, _ = desk
     b.advance(4)
-    c.put("/api/overrides/01:30", json={"battery_fraction": 0.5, "note": "n"})
+    c.put("/api/plan/01:30", json={"battery_fraction": 0.5, "note": "n"})
     c.post("/api/decisions/00:15/flag", json={"reason": "r"})
     for a in c.get("/api/alerts").json():
         _check_interface(a, "Alert", contract, "Alert")

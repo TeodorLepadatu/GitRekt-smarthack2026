@@ -1,5 +1,5 @@
 /** All plain-language wording for the operator lives here. */
-import type { Confidence, DaySlot, Decision, Goal, GoalStatus, Interval } from "@/api/types";
+import type { AutonomyMode, Confidence, DaySlot, Decision, Goal, GoalStatus, Interval, IntervalControl } from "@/api/types";
 
 export type ActionKind = "charge" | "discharge" | "hold";
 
@@ -31,7 +31,7 @@ export const actionShort: Record<ActionKind, string> = {
   hold: "Hold",
 };
 
-export type SourceKind = "ai" | "backup" | "safety" | "operator";
+export type SourceKind = "ai" | "backup" | "operator" | "safety";
 
 /** Who decided this interval. Safety adjustment wins over the decision source. */
 export function sourceKind(iv: Pick<Interval, "decision" | "guard">): SourceKind {
@@ -43,21 +43,17 @@ export function sourceKind(iv: Pick<Interval, "decision" | "guard">): SourceKind
 export const sourceLabel: Record<SourceKind, string> = {
   ai: "AI",
   backup: "Backup rules",
-  safety: "Adjusted by safety",
   operator: "Operator",
+  safety: "Adjusted by safety",
 };
 
 export const sourceHint: Record<SourceKind, string> = {
   ai: "The AI made this decision and it passed all safety checks.",
   backup: "The AI's answer could not be used, so the backup rules decided.",
+  operator:
+    "A person set the battery: a manual override, an interval set ahead on the Day tab, the emergency hold, or a rejected AI proposal.",
   safety: "The safety layer changed the decision to respect battery limits or your goals.",
-  operator: "You set this interval ahead of time. It still passed the safety checks.",
 };
-
-/** Who proposed the action, in a sentence: "AI", "backup rules", "you". */
-export function proposerText(d: Decision): string {
-  return d.source === "llm" ? "AI" : d.source === "operator" ? "you" : "backup rules";
-}
 
 /** Battery fraction (−1 … 1) as an action, e.g. "Charge 60%", "Hold". */
 export function fractionText(f: number): string {
@@ -77,6 +73,45 @@ export function clockTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** What the operator had to do with this interval, or null when the AI acted on its own. */
+export function controlText(c: IntervalControl): string | null {
+  const proposed = c.proposed_mw == null ? "" : ` (the AI proposed to ${actionPhrase(c.proposed_mw)})`;
+  switch (c.action) {
+    case "approved":
+      return `Approved by the operator${proposed}`;
+    case "rejected":
+      return `Rejected by the operator${proposed}, battery held`;
+    case "timeout":
+      return `No answer from the operator in time${proposed}, battery held`;
+    case "override":
+      return `Manual override${proposed}`;
+    case "hold":
+      return "Emergency hold: battery idle, nothing exported";
+    default:
+      return null;
+  }
+}
+
+/** "charge 3.00 MW" / "discharge 1.20 MW" / "hold" */
+export function actionPhrase(mw: number): string {
+  const k = actionKind(mw);
+  if (k === "charge") return `charge ${fmtMw(mw)}`;
+  if (k === "discharge") return `discharge ${fmtMw(-mw)}`;
+  return "hold";
+}
+
+export const autonomyLabel: Record<AutonomyMode, string> = {
+  autonomous: "Autonomous",
+  supervised: "Ask before big moves",
+  advisory: "Advisory only",
+};
+
+export const autonomyHint: Record<AutonomyMode, string> = {
+  autonomous: "The AI's decisions run as they are. The safety layer still checks every one.",
+  supervised: "Small, confident moves run by themselves. Bigger or unsure ones wait for your click.",
+  advisory: "The AI only suggests. Nothing moves the battery until you approve it.",
+};
+
 export function fallbackReasonText(d: Decision): string | null {
   if (d.source !== "fallback") return null;
   switch (d.fallback_reason) {
@@ -87,6 +122,8 @@ export function fallbackReasonText(d: Decision): string | null {
     case "feature_error":
     case "prompt_error":
       return "Some site data was missing, backup rules decided";
+    case "approval_timeout":
+      return "No answer from the operator in time, battery held";
     default:
       return "AI answer was unusable, backup rules decided";
   }
@@ -128,6 +165,8 @@ export function ruleText(rule: string, goals: Goal[]): string | null {
     case "no_soc_hold":
     case "guard_error_hold":
       return "Safe mode: battery held";
+    case "emergency_hold":
+      return "Emergency hold: battery idle, nothing exported";
     case "import_cap_discharge":
       return "Discharging to keep grid import under the limit";
     case "import_cap_charge_limited":

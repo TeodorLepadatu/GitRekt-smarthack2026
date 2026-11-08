@@ -66,7 +66,13 @@ All types live in [`src/api/types.ts`](src/api/types.ts). The mock layer uses ex
 | `POST /api/goals {text}` | `{goals, question?}`. `question` is set when the goal was too vague to parse |
 | `DELETE /api/goals/:id` | anything (2xx) |
 | `GET /api/metrics` | `Metrics` (profit, MWh sold/bought/curtailed, decision counts by source, goals met) |
-| `GET /api/stream` | SSE, event `cycle`, data = one interval (same shape as a `/api/day` slot); event `alert`, data = one `Alert` just raised |
+| `GET /api/stream` | SSE, event `cycle`, data = one interval (same shape as a `/api/day` slot); event `control`, data = `ControlState`; event `alert`, data = one `Alert` just raised |
+| `GET /api/control` | `ControlState`: emergency `hold`, `override`, `autonomy`, `pending` approval |
+| `POST /api/override {setpoint_mw, until}` | `ControlState`. The operator's setpoint from the next interval up to `until`, still through the safety layer; 422 if out of range or in the past |
+| `DELETE /api/override` | `ControlState`, the AI decides again |
+| `POST /api/hold` / `DELETE /api/hold` | `ControlState`. Emergency hold on or off: battery idle, nothing exported |
+| `PUT /api/autonomy {mode?, max_auto_mw?, ask_on_low_confidence?, timeout_s?}` | `ControlState`; only the fields sent change |
+| `POST /api/approvals/:id {approve}` | `ControlState`; 409 when that proposal is no longer waiting |
 | `POST /api/sim/run {speed}` | starts the simulation; **`speed: 0` pauses** |
 | `POST /api/sim/reset` | restarts the day at 00:00 |
 
@@ -80,8 +86,8 @@ What a person needs to step in (`backend/desk.py`, mocked in `src/mocks/desk.ts`
 | `POST /api/alerts/:id/ignore` | hides it until its condition clears and comes back |
 | `POST /api/goals/:id/relax` | `{goals, message}`: lowers a reserve goal to what can still be stored by its deadline (409 if nothing useful is left) |
 | `GET /api/upcoming?n=8` | `{now, slots: UpcomingSlot[]}`: the next intervals' planned action (backup rules + guard on the forecast) and any override |
-| `PUT /api/overrides/:time {battery_fraction, note}` | `Override`. `0` = hold ("Skip"). The AI is not asked for that interval; the guard still checks it. 409 if already decided |
-| `DELETE /api/overrides/:time` | gives the interval back to the AI |
+| `PUT /api/plan/:time {battery_fraction, note}` | `IntervalPlan`: one upcoming interval set ahead of time. `0` = hold ("Skip"). The AI is not asked for that interval; the guard still checks it. A standing override or the emergency hold wins over it. 409 if already decided or being decided |
+| `DELETE /api/plan/:time` | gives the interval back to the AI |
 | `GET /api/flags` | `DecisionFlag[]` |
 | `POST /api/decisions/:time/flag {reason}` / `DELETE` | flag or unflag a decision. The full decision and its situation are kept in `logs/decision_flags.jsonl` for later prompt examples |
 | `GET /api/audit?limit=200` | `AuditEntry[]`, latest first: goal changes, overrides, flags, ignored alerts, simulation settings. Kept in `logs/audit.jsonl` |
@@ -100,6 +106,7 @@ every payload against it, so the two cannot drift apart:
 | `StateSnapshot` | `dashboard.state_payload(runner, running=, speed=)` |
 | `Metrics` | `dashboard.metrics_payload(runner)` |
 | `Goal[]` | `dashboard.goals_payload(runner)` |
+| `ControlState` (and the SSE `control` event) | `control.OperatorControl.snapshot()` |
 
 - `soc_mwh` is the energy stored at the **end** of the interval (the loop's `soc_after_mwh`).
 - `/api/day` future slots carry the forecast only, and their `break_even` is recomputed
@@ -111,6 +118,9 @@ every payload against it, so the two cannot drift apart:
   coverage, clip and fallback rates) as optional fields.
 - `speed: 0` on `/api/sim/run` as the pause command.
 - Goal `type` values: `reserve`, `min_sell_price`, `max_profit`.
+- `decision.source` is `operator` when a person set the battery (override, emergency hold, a
+  rejected proposal); every `Interval` has `control: {action, mode, proposed_mw}` saying what
+  the operator had to do with it (`auto`, `approved`, `rejected`, `timeout`, `override`, `hold`).
 
 Still missing: the HTTP layer itself. The payloads are ready, but nothing serves them
 yet, so `VITE_USE_MOCKS=true` is still the only working mode (see `src/mocks/`).
@@ -128,6 +138,7 @@ yet, so `VITE_USE_MOCKS=true` is still the only working mode (see `src/mocks/`).
 | `src/components/goals/` | goal input with examples, active goals, parser questions |
 | `src/components/timeline/` | decision history with filters and expandable AI reasoning |
 | `src/components/metrics/` | ruled figure rows for the Day and Decisions pages |
+| `src/components/control/` | operator control: take control (override), autonomy level, and the strip on every page with the emergency hold and pending approvals |
 | `src/components/demo/` | simulation strip: run / speed / restart |
 | `src/components/common/marks.tsx` | status words, who-decided marks, progress lines, sections (instead of badges and cards) |
 

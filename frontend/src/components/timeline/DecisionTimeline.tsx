@@ -5,13 +5,13 @@ import { PanelError, PanelLoading } from "@/components/common/PanelState";
 import { cn } from "@/lib/utils";
 import { TimelineRow } from "./TimelineRow";
 
-type Filter = "all" | "backup" | "safety" | "operator" | "flagged";
+type Filter = "all" | "backup" | "operator" | "safety" | "flagged";
 
 const filters: { id: Filter; label: string; test: (iv: Interval, flags: Map<string, DecisionFlag>) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
   { id: "backup", label: "Backup rules", test: (iv) => iv.decision.source === "fallback" },
+  { id: "operator", label: "Operator involved", test: (iv) => iv.control.action !== "auto" },
   { id: "safety", label: "Changed by safety", test: (iv) => iv.guard.clipped },
-  { id: "operator", label: "Set by you", test: (iv) => iv.decision.source === "operator" },
   { id: "flagged", label: "Flagged", test: (iv, flags) => flags.has(iv.time) },
 ];
 

@@ -297,21 +297,77 @@ function operatorDecision(o: MockOverride): Decision {
 export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goal[], override?: MockOverride | null): Interval {
   const startMin = i * 15;
   const failure = LLM_FAILURES[i];
+  if (override) {
+    // an interval set ahead of time on the Day tab: the AI is not asked, the guard still checks it
+    const decision = operatorDecision(override);
+    return finish(i, f, soc, decision, runGuard(decision, f, soc, goals, startMin));
+  }
+  const p = failure ? proposeFallback(f, goals, soc, startMin) : proposeLlm(f, soc, goals, startMin);
+  const decision: Decision = {
+    battery_fraction: r2(p.fraction),
+    curtail: p.curtail,
+    source: failure ? "fallback" : "llm",
+    confidence: p.confidence,
+    reasoning: p.reasoning,
+    explanation_for_operator: p.explanation,
+    fallback_reason: failure ?? null,
+  };
+  return finish(i, f, soc, decision, runGuard(decision, f, soc, goals, startMin));
+}
+
+/**
+ * What the operator can make an interval do instead of the AI (loop/day.py):
+ * override  their setpoint, through the guard
+ * hold      emergency hold: idle, the surplus switched off, the guard skipped
+ * reject    the AI's proposal was rejected: hold, through the guard
+ * timeout   nobody answered the proposal: hold, through the guard
+ */
+export type MockCommand =
+  | { kind: "override"; setpoint_mw: number; until: string }
+  | { kind: "hold" }
+  | { kind: "reject"; proposed_mw: number }
+  | { kind: "timeout"; proposed_mw: number };
+
+const verb = (mw: number) => (mw > 0.005 ? `charge ${mw.toFixed(2)} MW` : mw < -0.005 ? `discharge ${(-mw).toFixed(2)} MW` : "hold");
+
+export function runCommand(i: number, f: ForecastInterval, soc: number, goals: Goal[], cmd: MockCommand): Interval {
+  const operator = (fraction: number, explanation: string): Decision => ({
+    battery_fraction: fraction,
+    curtail: false,
+    source: "operator",
+    confidence: "high",
+    reasoning: "",
+    explanation_for_operator: explanation,
+    fallback_reason: null,
+  });
+  if (cmd.kind === "hold") {
+    const decision = operator(0, "Emergency hold: the battery is idle and nothing is exported until the operator releases it.");
+    const guard: GuardResult = {
+      battery_setpoint_mw: 0,
+      curtail_mw: r2(Math.max(0, f.production_mw - f.demand_mw)),
+      clipped: false,
+      applied_rules: ["emergency_hold"],
+    };
+    return finish(i, f, soc, decision, guard);
+  }
   let decision: Decision;
-  if (override) decision = operatorDecision(override);
-  else {
-    const p = failure ? proposeFallback(f, goals, soc, startMin) : proposeLlm(f, soc, goals, startMin);
+  if (cmd.kind === "override") {
+    decision = operator(clamp(cmd.setpoint_mw / P_MAX, -1, 1), `Operator override: ${verb(cmd.setpoint_mw)} until ${cmd.until}.`);
+  } else if (cmd.kind === "reject") {
+    decision = operator(0, `The operator rejected the AI's proposal to ${verb(cmd.proposed_mw)}: battery held.`);
+  } else {
     decision = {
-      battery_fraction: r2(p.fraction),
-      curtail: p.curtail,
-      source: failure ? "fallback" : "llm",
-      confidence: p.confidence,
-      reasoning: p.reasoning,
-      explanation_for_operator: p.explanation,
-      fallback_reason: failure ?? null,
+      ...operator(0, `No answer to the AI's proposal to ${verb(cmd.proposed_mw)} in time: battery held.`),
+      source: "fallback",
+      confidence: "low",
+      fallback_reason: "approval_timeout",
     };
   }
-  const guard = runGuard(decision, f, soc, goals, startMin);
+  return finish(i, f, soc, decision, runGuard(decision, f, soc, goals, i * 15));
+}
+
+/** The interval once the battery has run the guard's setpoint. `control` is filled in by the caller. */
+function finish(i: number, f: ForecastInterval, soc: number, decision: Decision, guard: GuardResult): Interval {
   const sp = guard.battery_setpoint_mw;
   return {
     ...f,
@@ -321,6 +377,7 @@ export function runCycle(i: number, f: ForecastInterval, soc: number, goals: Goa
     guard,
     // Same math as settlement/settle.py (forecast = actual in the mock).
     settlement: settle(f.price_eur_mwh, f.demand_mw, f.production_mw, sp, guard.curtail_mw),
+    control: { action: "auto", mode: "autonomous", proposed_mw: null },
   };
 }
 

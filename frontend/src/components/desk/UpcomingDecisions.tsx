@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useClearOverride, useSetOverride, useUpcoming } from "@/api/hooks";
+import { useClearPlan, useSetPlan, useUpcoming } from "@/api/hooks";
 import type { UpcomingSlot } from "@/api/types";
 import { actionWord, Section } from "@/components/common/marks";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
@@ -16,8 +16,8 @@ type Dir = "charge" | "hold" | "discharge";
  */
 export function UpcomingDecisions() {
   const up = useUpcoming();
-  const set = useSetOverride();
-  const clear = useClearOverride();
+  const set = useSetPlan();
+  const clear = useClearPlan();
   const [editing, setEditing] = useState<string | null>(null);
   const busy = set.isPending || clear.isPending;
   const error = set.error ?? clear.error;

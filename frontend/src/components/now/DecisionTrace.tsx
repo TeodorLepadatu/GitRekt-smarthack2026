@@ -1,16 +1,8 @@
 import type { CSSProperties } from "react";
 import type { Goal, Interval } from "@/api/types";
-import { actionKind, confidenceLabel, fallbackReasonText, fmtMw, fmtPrice, rulesText } from "@/lib/labels";
+import { actionPhrase as phrase, confidenceLabel, fallbackReasonText, fmtMw, fmtPrice, rulesText } from "@/lib/labels";
 import { Reveal } from "@/components/common/Reveal";
 import { cn } from "@/lib/utils";
-
-/** "charge 3.00 MW" / "discharge 1.20 MW" / "hold" */
-function phrase(mw: number) {
-  const k = actionKind(mw);
-  if (k === "charge") return `charge ${fmtMw(mw)}`;
-  if (k === "discharge") return `discharge ${fmtMw(-mw)}`;
-  return "hold";
-}
 
 interface Step {
   name: string;
@@ -20,11 +12,37 @@ interface Step {
   intervened?: boolean;
 }
 
+/** Steps 2 and 3: what the AI proposed, and what turned it into a command. */
+function decisionSteps(iv: Interval, proposed: number): [Step, Step] {
+  const { action, proposed_mw } = iv.control;
+  const notAsked: Step = { name: "AI proposal", result: "not asked", detail: "the operator is in control", intervened: true };
+  const asked: Step = proposed_mw != null ? { name: "AI proposal", result: phrase(proposed_mw), detail: "waited for the operator" } : notAsked;
+  switch (action) {
+    case "approved":
+      return [asked, { name: "Operator", result: "approved", detail: "clicked to let it run" }];
+    case "rejected":
+      return [asked, { name: "Operator", result: "rejected: hold", detail: "the battery holds instead", intervened: true }];
+    case "timeout":
+      return [asked, { name: "Operator", result: "no answer: hold", detail: "the wait ran out", intervened: true }];
+    case "override":
+      return [asked, { name: "Operator", result: phrase(proposed), detail: "manual override", intervened: true }];
+    case "hold":
+      return [asked, { name: "Operator", result: "emergency hold", detail: "idle, nothing exported", intervened: true }];
+  }
+  return iv.decision.source === "llm"
+    ? [
+        { name: "AI proposal", result: phrase(proposed), detail: confidenceLabel[iv.decision.confidence].toLowerCase() },
+        { name: "Check", result: "answer accepted", detail: "valid and within limits" },
+      ]
+    : [
+        { name: "AI proposal", result: "no usable answer", detail: iv.decision.fallback_reason?.replace(/_/g, " ") ?? undefined, intervened: true },
+        { name: "Backup rules", result: phrase(proposed), detail: fallbackReasonText(iv.decision)?.split(",")[0] ?? undefined, intervened: true },
+      ];
+}
+
 function buildSteps(iv: Interval, goals: Goal[], maxPowerMw: number): Step[] {
   const net = iv.production_mw - iv.demand_mw;
   const proposed = iv.decision.battery_fraction * maxPowerMw;
-  const llm = iv.decision.source === "llm";
-  const operator = iv.decision.source === "operator";
   const notes = rulesText(iv.guard.applied_rules, goals);
   const sp = iv.guard.battery_setpoint_mw;
 
@@ -34,16 +52,7 @@ function buildSteps(iv: Interval, goals: Goal[], maxPowerMw: number): Step[] {
       result: fmtPrice(iv.price_eur_mwh),
       detail: `break-even €${iv.break_even.toFixed(0)} · ${net >= 0 ? `${fmtMw(net)} spare` : `${fmtMw(-net)} short`}`,
     },
-    operator
-      ? { name: "AI proposal", result: "not asked", detail: "you set this interval ahead of time" }
-      : llm
-        ? { name: "AI proposal", result: phrase(proposed), detail: confidenceLabel[iv.decision.confidence].toLowerCase() }
-        : { name: "AI proposal", result: "no usable answer", detail: iv.decision.fallback_reason?.replace(/_/g, " ") ?? undefined, intervened: true },
-    operator
-      ? { name: "Operator override", result: phrase(proposed), detail: "set on the Day tab", intervened: true }
-      : llm
-        ? { name: "Check", result: "answer accepted", detail: "valid and within limits" }
-        : { name: "Backup rules", result: phrase(proposed), detail: fallbackReasonText(iv.decision)?.split(",")[0] ?? undefined, intervened: true },
+    ...decisionSteps(iv, proposed),
     iv.guard.clipped
       ? {
           name: "Safety layer",
@@ -66,7 +75,7 @@ function endOf(t: string) {
   return e >= 1440 ? "24:00" : `${String(Math.floor(e / 60)).padStart(2, "0")}:${String(e % 60).padStart(2, "0")}`;
 }
 
-/** Forecast -> AI -> check -> safety -> battery, with what each step did this interval. */
+/** Forecast -> AI -> check (or the operator) -> safety -> battery, with what each step did this interval. */
 export function DecisionTrace({ iv, goals, maxPowerMw }: { iv: Interval; goals: Goal[]; maxPowerMw: number }) {
   const steps = buildSteps(iv, goals, maxPowerMw);
   return (

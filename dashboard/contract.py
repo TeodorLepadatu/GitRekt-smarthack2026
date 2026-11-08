@@ -36,8 +36,11 @@ from battery import BatteryConfig
 from common import finite_float, goal_config_dict
 from feature_builder import PriceCurve, SiteForecast, break_even_at
 
-SOURCES = ("llm", "fallback", "operator")  # operator = an override set on the Day tab
+SOURCES = ("llm", "fallback", "operator")  # operator = an override, hold or rejection, or a Day-tab plan
 CONFIDENCES = ("low", "medium", "high")
+# loop/day.py control actions and control/ autonomy modes: types.ts ControlAction and AutonomyMode
+CONTROL_ACTIONS = ("auto", "approved", "rejected", "timeout", "override", "hold")
+AUTONOMY_MODES = ("autonomous", "supervised", "advisory")
 # settlement/goals.py statuses, which are already the dashboard's GoalStatus union
 STATUSES = ("on_track", "behind", "met", "unreachable", "missed", "violated")
 
@@ -99,6 +102,7 @@ def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
     decision = rec.get("decision") if isinstance(rec.get("decision"), Mapping) else {}
     guard = rec.get("guard") if isinstance(rec.get("guard"), Mapping) else {}
     site = rec.get("site") if isinstance(rec.get("site"), Mapping) else {}
+    control = rec.get("control") if isinstance(rec.get("control"), Mapping) else {}
 
     production = max(0.0, _num(rec.get("production_mw")))
     solar, wind = _split(production, features.get("solar_mw"), features.get("wind_mw"))
@@ -132,6 +136,12 @@ def interval_payload(record: Mapping[str, Any]) -> dict[str, Any]:
             "applied_rules": [str(r) for r in (guard.get("applied_rules") or [])],
         },
         "settlement": {name: _num(rec.get(name)) for name in SETTLEMENT_FIELDS},
+        # Who set the battery. Records from before operator control read as the AI, autonomous.
+        "control": {
+            "action": _one_of(control.get("action"), CONTROL_ACTIONS, "auto"),
+            "mode": _one_of(control.get("mode"), AUTONOMY_MODES, "autonomous"),
+            "proposed_mw": _opt(control.get("proposed_mw")),
+        },
     }
 
 
@@ -225,7 +235,7 @@ def metrics_payload(runner: Any) -> dict[str, Any]:
     for name in ("profit_today_eur", "energy_cost_eur", "wear_eur", "no_battery_profit_eur",
                  "value_added_eur", "energy_sold_mwh", "energy_bought_mwh", "curtailed_mwh"):
         metrics[name] = _num(metrics.get(name))
-    for name in ("decisions_total", "decisions_llm", "decisions_fallback", "decisions_clipped",
+    for name in ("decisions_total", "decisions_llm", "decisions_fallback", "decisions_operator", "decisions_clipped",
                  "goals_met", "goals_total", "import_limit_exceeded_intervals"):
         metrics[name] = int(_num(metrics.get(name)))
     # Peak shaving: the limit stays null when no cap is set.

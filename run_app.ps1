@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
-    [string]$Date,
+    # A real day (ML forecasts + ENTSO-E prices); -Date "" runs the made-up demo day instead.
+    [string]$Date = "2026-11-06",
     [string]$Start = "00:00",
     [int]$BackendPort = 8001
 )
 
 $ErrorActionPreference = "Stop"
-$UseLLM = $false
+$UseLLM = $true
 $root = (Resolve-Path $PSScriptRoot).Path
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $frontend = Join-Path $root "frontend"

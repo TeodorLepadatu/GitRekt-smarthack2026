@@ -10,6 +10,13 @@ intervals, never in the middle of one.
 The shapes come from dashboard/contract.py, the one place the loop's objects
 are translated into frontend/src/api/types.ts; this module only adds the
 objective entry and the goal commands the frontend's goal list needs.
+
+Operator control (override, emergency hold, autonomy, approvals) lives in one
+``control.OperatorControl`` that outlives the days and is handed to every
+DayRunner. Unlike goals, its commands are not queued: the loop asks it at the
+start of every interval, and while the loop waits for an approval the worker
+is blocked inside it, so an answer has to reach it directly. Every change is
+pushed to the listeners as a ``control`` event next to the ``cycle`` events.
 """
 from __future__ import annotations
 
@@ -24,6 +31,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Optional
 
 from battery import BatteryConfig
+from control import Autonomy, OperatorControl, autonomy_from
 from dashboard import day_payload, goals_payload, interval_payload, metrics_payload, state_payload
 from feature_builder import build_features
 from goal_parser import GoalStore
@@ -75,6 +83,7 @@ class Backend:
         clock: Callable[[], float] = _time.monotonic,
         log_path: Optional[str] = None,
         max_import_mw: Optional[float] = None,
+        autonomy: Optional[Autonomy] = None,
         operator_log_dir: Optional[str] = None,
     ):
         self.goals = goal_store
@@ -93,9 +102,11 @@ class Backend:
         self._pending_goals = False
         self._pending_reset = False
         self._stopped = False
-        self._listeners: set[Callable[[dict], None]] = set()
-        self._alert_listeners: set[Callable[[dict], None]] = set()
+        self._listeners: set[Callable[[str, dict], None]] = set()
         self._deciding: Optional[int] = None    # the interval the worker is deciding right now
+        self.control = OperatorControl(max_power_mw=self.cfg.p_max_mw, autonomy=autonomy,
+                                       interval_min=round(self.cfg.interval_h * 60),
+                                       on_change=lambda snap: self._emit("control", snap))
         # the operator's desk (backend/desk.py); the files live in operator_log_dir
         self.alerts = AlertBook()
         self.overrides = Overrides()
@@ -240,6 +251,48 @@ class Backend:
             self._pending_goals = True
             self._cond.notify_all()
 
+    def control_state(self) -> dict:
+        return self.control.snapshot()
+
+    # Standing operator control (control/): every command that went through is audited.
+
+    def set_override(self, setpoint_mw: float, until: str) -> dict:
+        """Run ``setpoint_mw`` from the next interval up to ``until`` (ControlError if not possible)."""
+        with self._cond:
+            now = self._runner.now
+        out = self.control.set_override(setpoint_mw, until, now=now)
+        self._audit("control_override", f"Took over: {_mw_verb(setpoint_mw)} until {until}",
+                    {"setpoint_mw": setpoint_mw, "until": until})
+        return out
+
+    def clear_override(self) -> dict:
+        out = self.control.clear_override()
+        self._audit("control_released", "Gave control back to the AI")
+        return out
+
+    def set_hold(self, on: bool) -> dict:
+        out = self.control.set_hold(on)
+        self._audit("emergency_hold", "Emergency hold on" if on else "Emergency hold released", {"on": on})
+        return out
+
+    def set_autonomy(self, **changes: Any) -> dict:
+        """Change some of the autonomy settings; the others stay (ControlError if invalid)."""
+        out = self.control.set_autonomy(autonomy_from(self.control.autonomy, **changes))
+        what = ", ".join(f"{k} = {v}" for k, v in changes.items() if v is not None)
+        self._audit("autonomy_changed", f"Changed AI autonomy: {what}", {k: v for k, v in changes.items()})
+        return out
+
+    def answer_approval(self, proposal_id: int, approve: bool) -> dict:
+        """Approve or reject the AI's waiting proposal (NoPendingApproval if it is not waiting)."""
+        out = self.control.answer(proposal_id, approve)
+        self._audit("approval_answered", f"{'Approved' if approve else 'Rejected'} the AI's proposal #{proposal_id}",
+                    {"proposal_id": proposal_id, "approve": approve})
+        return out
+
+    def _audit(self, action: str, summary: str, detail: Optional[dict] = None) -> None:
+        with self._cond:
+            self._log(action, summary, detail)
+
     def run(self, speed: float) -> dict:
         """Run at ``speed`` (1 = real time, 600 = 1.5 s per interval); 0 pauses.
         Starting again after the day is over begins a new day."""
@@ -262,6 +315,7 @@ class Backend:
             self._speed = 0.0
             self._pending_reset = True
             self._cond.notify_all()
+        self.control.new_day()          # the worker may be waiting for an approval: let it go
         self.wait_idle()
         return self.sim_status()
 
@@ -314,7 +368,10 @@ class Backend:
             self._log("alert_ignored", f"Ignored alert: {alert['title']}",
                       {"alert_id": alert_id, "kind": alert["kind"]})
 
-    def set_override(self, time: str, battery_fraction: float, note: str = "") -> dict:
+    # Per-interval plan (Day tab, "Skip" / "Change"): one interval, set ahead of time.
+    # A standing override or an emergency hold (above) wins over it.
+
+    def set_plan(self, time: str, battery_fraction: float, note: str = "") -> dict:
         """Set the action for an interval that has not run yet. 0 = hold (skip the planned action)."""
         with self._cond:
             index = self._future_index(time)
@@ -327,7 +384,7 @@ class Backend:
                       {"time": time, "battery_fraction": f, "note": o["note"], "planned": planned})
         return o
 
-    def clear_override(self, time: str) -> None:
+    def clear_plan(self, time: str) -> None:
         with self._cond:
             self._future_index(time)
             if self.overrides.remove(time) is None:
@@ -350,15 +407,6 @@ class Backend:
                 raise NotFound(time)
             self._log("decision_unflagged", f"Removed the flag on {time}", {"time": time})
 
-    def add_alert_listener(self, fn: Callable[[dict], None]) -> None:
-        """Call ``fn(alert)`` for every alert raised (from the worker thread: keep it quick)."""
-        with self._cond:
-            self._alert_listeners.add(fn)
-
-    def remove_alert_listener(self, fn: Callable[[dict], None]) -> None:
-        with self._cond:
-            self._alert_listeners.discard(fn)
-
     def advance(self, n: int = 1) -> list[dict]:
         """Run ``n`` intervals right now (paused only). Used to warm up a demo day and by tests."""
         with self._cond:
@@ -372,12 +420,15 @@ class Backend:
             out.append(iv)
         return out
 
-    def add_listener(self, fn: Callable[[dict], None]) -> None:
-        """Call ``fn(interval)`` for every new interval (from the worker thread: keep it quick)."""
+    def add_listener(self, fn: Callable[[str, dict], None]) -> None:
+        """Call ``fn(event, data)`` for every event: ``("cycle", interval)`` for each new interval,
+        ``("control", control_state)`` when the operator control changes, ``("alert", alert)``
+        when the operator desk raises an alert. Called from the
+        worker or an HTTP thread: keep it quick."""
         with self._cond:
             self._listeners.add(fn)
 
-    def remove_listener(self, fn: Callable[[dict], None]) -> None:
+    def remove_listener(self, fn: Callable[[str, dict], None]) -> None:
         with self._cond:
             self._listeners.discard(fn)
 
@@ -385,7 +436,9 @@ class Backend:
         """Every new interval as it is decided; None every ``heartbeat_s`` with nothing new."""
         q: queue.Queue = queue.Queue(maxsize=200)
 
-        def put(interval: dict) -> None:
+        def put(event: str, interval: dict) -> None:
+            if event != "cycle":
+                return
             try:
                 q.put_nowait(interval)
             except queue.Full:                      # a stalled reader must not block the site
@@ -412,6 +465,7 @@ class Backend:
         with self._cond:
             self._stopped = True
             self._cond.notify_all()
+        self.control.release()
         self._thread.join(timeout=2)
 
     # ------------------------------------------------------------------ worker
@@ -470,24 +524,31 @@ class Backend:
                 self._speed = 0.0
             self._publish()
             raised = self._refresh_alerts()
-            calls = [(fn, interval) for fn in self._listeners]
-            calls += [(fn, alert) for alert in raised for fn in self._alert_listeners]
             self._cond.notify_all()
-        for fn, payload in calls:
+        self._emit("cycle", interval)
+        for alert in raised:
+            self._emit("alert", alert)
+        return interval
+
+    def _emit(self, event: str, data: dict) -> None:
+        with self._cond:
+            listeners = list(self._listeners)
+        for fn in listeners:
             try:
-                fn(payload)
+                fn(event, data)
             except Exception:                       # a broken listener must not stop the site
                 pass
-        return interval
 
     def _new_day(self) -> None:
         self._day = self.day_factory()
+        self.control.new_day()
         self.overrides.clear()          # overrides, alerts and flags belong to one day; the audit stays
         self.alerts.clear()
         self.flags.clear()
         self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self.start_soc_mwh,
                                  battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path,
-                                 max_import_mw=self.max_import_mw, override_for=self.overrides.get)
+                                 max_import_mw=self.max_import_mw, control=self.control,
+                                 override_for=self.overrides.get)
         self._publish()
         self._deadline = None
 
@@ -558,3 +619,11 @@ class Backend:
             if src and src in sentence.lower():
                 return i
         return None
+
+
+def _mw_verb(mw: float) -> str:
+    if mw > 0.005:
+        return f"charge {mw:.2f} MW"
+    if mw < -0.005:
+        return f"discharge {-mw:.2f} MW"
+    return "hold"
