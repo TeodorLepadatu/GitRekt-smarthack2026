@@ -1,27 +1,160 @@
-# GitRekt
-Smarthack 2026
+# GitRekt — an LLM energy agent for a battery site
 
-## Repository layout
+**Smarthack 2026**
 
-| Path | What it is |
+GitRekt runs a battery next to a solar and wind site on the Romanian grid. Every 15 minutes it
+looks at the price, the forecasts and the operator's goals, then decides whether to charge,
+discharge, hold or curtail. A local LLM (Ollama) proposes the move and a deterministic safety
+layer has the final say. The dashboard shows what happened and why, in plain language and with
+the real numbers.
+
+- **Real data.** ENTSO-E load, generation and day-ahead prices for Romania, plus Open-Meteo
+  weather, every 15 minutes from 2022-11-07 to 2026-11-07 (140k rows).
+- **Own forecasts.** LightGBM models for demand, solar and wind at any lead time up to 7 days,
+  each with a calibrated 10–90 % band.
+- **Goals in plain language.** Operators write goals like *"Store 6 MWh by 18:00"* or *"Never
+  sell below 50 EUR/MWh"*. These become hard rules, and a vague goal gets a clarifying question back.
+- **The LLM only advises.** Every decision goes through a validator, a rule-based fallback and a
+  guard that enforces the battery's physics and the hard goals.
+- **Honest money.** A settlement ledger books energy, battery wear and (optionally) imbalance
+  penalties against what was actually measured, not against the forecast.
+- **Humans stay in charge.** Manual override, emergency hold, three autonomy levels with approvals,
+  alerts, planned interventions, decision flags and a full audit log.
+- **Explained.** Each decision gets an explanation built from its own numbers, and an end-of-day
+  report says what the battery did and what it was worth.
+
+---
+
+## Contents
+
+1. [Quick start](#quick-start)
+2. [The dashboard](#the-dashboard)
+3. [How it works](#how-it-works)
+4. [Decision making](#decision-making)
+5. [Operator control](#operator-control)
+6. [Imbalance: paying for being wrong](#imbalance-paying-for-being-wrong)
+7. [Forecasting (ML 1 + ML 2)](#forecasting-ml-1--ml-2)
+8. [Data](#data)
+9. [Command line](#command-line)
+10. [Configuration](#configuration)
+11. [HTTP API](#http-api)
+12. [Project layout](#project-layout)
+13. [Tests](#tests)
+14. [License](#license)
+
+---
+
+## Quick start
+
+There are three ways to run it. Every option serves the dashboard at **http://localhost:5173**.
+
+### 1. Docker (recommended, everything included)
+
+With Docker Desktop (or Docker Engine + Compose ≥ 2.24) running, from the repository root:
+
+```bash
+docker compose up --build
+```
+
+This starts Ollama, pulls and warms the default model (`qwen3.5:4b`), starts the API in LLM
+mode on the **presentation day, 2026-09-28**, and serves the built dashboard through nginx.
+On that day solar is almost free at midday (about EUR 9/MWh, with a 4–6 MW surplus) and the
+evening peak goes above EUR 300/MWh. The first run takes a few minutes and needs disk space for
+the model. Stop it with `Ctrl+C` or `docker compose down`.
+
+Pick another model or day:
+
+```powershell
+# Windows PowerShell
+$env:ENERGY_AGENT_MODEL = "qwen3:4b"; $env:ENERGY_AGENT_GOAL_MODEL = "qwen3:4b"
+$env:ENERGY_AGENT_DATE = "2026-06-15"
+docker compose up --build
+```
+
+```bash
+# macOS / Linux
+ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b ENERGY_AGENT_DATE=2026-06-15 \
+  docker compose up --build
+```
+
+Compose overlays:
+
+| File | Use it when |
 |---|---|
-| `backend/` | FastAPI app: REST + SSE for the dashboard (`python -m backend`) |
-| `frontend/` | React + Vite dashboard |
-| `loop/` | The clock: runs one simulated day, interval by interval |
-| `pipeline.py` | One decision, end to end: `feature_builder/` → `prompt_assembly/` → `llm/` → `validator/` → `guard/` |
-| `simulator/`, `settlement/` | The physics of the site, and the money, goal status and logs |
-| `goal_parser/` | Turns the operator's written goals into a `GoalConfig` |
-| `control/` | Manual override, emergency hold and the AI's autonomy level |
-| `dashboard/` | API payloads, matching `frontend/src/api/types.ts`; decision explanations and the day report |
-| `predictions/` | ML forecasts for demand, solar and wind, with their training data and models |
-| `price_api/` | Mock energy price API (`python -m price_api`) |
-| `battery.py`, `config.py`, `common.py` | The battery model, runtime settings, shared helpers |
-| `scripts/` | Data download (ENTSO-E), dataset build, synthetic market, plots, `run_app.*` launchers |
-| `data/`, `synthetic_out/` | Input data: ENTSO-E prices and load, synthetic imbalance prices |
-| `docs/` | The original plan and data plots |
-| `tests/` | All Python tests: `python -m pip install pytest; python -m pytest -q` |
+| `docker-compose.gpu.yml` | Linux with an NVIDIA GPU (needs the NVIDIA Container Toolkit; check with `docker run --rm --gpus all ubuntu nvidia-smi`) |
+| `docker-compose.host-ollama.yml` | You already run Ollama on the machine. On a Mac this is the fast option, because Ollama inside Docker is CPU-only there. On Linux, Ollama must listen on `0.0.0.0:11434` |
 
-## Pipeline
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
+```
+
+### 2. Local launcher (Python + Node.js)
+
+You need Python 3.11+ and Node.js 20+. Install the Python packages once:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+**Windows:**
+
+```powershell
+.\run_app.ps1                         # real day 2026-09-28, LLM decisions (Ollama must be running)
+.\run_app.ps1 -Date 2026-06-15        # another real day
+.\run_app.ps1 -Date ""                # the made-up demo day
+.\run_app.ps1 -Start 11:15            # pre-run the day up to 11:15
+```
+
+It opens the backend (port 8001) and the dashboard in two PowerShell windows, and installs the
+frontend packages on the first run. To run without Ollama, set `$UseLLM = $false` at the top of
+`run_app.ps1`. Decisions then come from the rule-based fallback.
+
+**macOS / Linux:**
+
+```bash
+./run_app.sh                          # demo day, rule-based decisions, no Ollama needed
+./run_app.sh --llm --model qwen3:4b   # LLM decisions (Ollama running on the machine)
+./run_app.sh --date 2026-09-28        # a real day
+./run_app.sh --start 11:15            # pre-run the day up to 11:15
+```
+
+Both processes run in one terminal, and `Ctrl+C` stops them. If Node.js is missing, the
+dashboard dev server runs in Docker.
+
+### 3. Dashboard only, with mock data
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+The whole API is simulated in the browser (`frontend/src/mocks/`), so no Python or Ollama is
+needed. This is handy for UI work or a backup demo.
+
+---
+
+## The dashboard
+
+React + TypeScript + Vite, Tailwind CSS, Recharts, TanStack Query and Server-Sent Events for
+live updates. The sections are kept in the URL hash:
+
+| Tab | What it shows |
+|---|---|
+| **Now** | The current action and its reason, a power-flow schematic, the decision trace (forecast → AI → check → safety → battery), what the battery's energy was worth, and the day so far |
+| **Day** | All 96 quarter-hours: price, stored energy, production vs demand. Past intervals are measured and later ones are forecast |
+| **Goals** | Type a goal as you would say it on the phone. You see its live status (on track / met / missed / violated), and any question the parser sends back |
+| **Decisions** | Every decision since 00:00, latest first, with filters, who decided it (AI, backup rules, operator, adjusted by the safety layer), the AI's reasoning and a flag button |
+| **Report** | The end-of-day report: charge/discharge phases, key decisions, safety interventions, goal outcomes, operator actions and money. Can be printed or saved as PDF, with an optional AI-written summary that may only use numbers from the report |
+| **Log** | The operator audit log: overrides, goal changes, flags, ignored alerts, simulation settings |
+
+A strip on every page holds the **emergency hold**, pending **approvals** and the **simulation
+controls**: run at 1×, 60× or 600×, pause, restart at 00:00, or move on to the next day.
+
+---
+
+## How it works
 
 What feeds the agent, and where its decisions end up.
 
@@ -49,19 +182,21 @@ flowchart TB
     GOALTXT["operator writes a goal<br/>'Store 6 MWh by 18:00'"] --> GP["goal_parser<br/>LLM, rule parser on failure<br/>a vague goal becomes a question"]
     GP --> GC["GoalConfig<br/>objective + hard goals"]
 
+    OP["control.OperatorControl<br/>override, hold, autonomy, approvals"] --> CYCLE
     DAYIN --> CYCLE["one interval, every 15 min"]
     GC --> CYCLE
     CYCLE --> LEDGER["settlement.DayLedger<br/>money, goal status, JSONL log"]
     LEDGER -->|"stored energy carries over"| CYCLE
-    LEDGER --> CONTRACT["dashboard/contract.py<br/>the shapes types.ts declares"]
-    CONTRACT --> BACKEND["backend/app.py<br/>REST + SSE"]
-    BACKEND --> UI["frontend<br/>Now, Day, Goals, Decisions"]
+    LEDGER --> CONTRACT["dashboard/<br/>contract, explanations, report"]
+    CONTRACT --> BACKEND["backend/app.py<br/>REST + SSE, operator desk"]
+    BACKEND --> UI["frontend<br/>Now, Day, Goals, Decisions, Report, Log"]
 ```
 
 ### One interval
 
-`pipeline.run_cycle(features, goal_config)` runs the middle of this end to end and never
-raises; `loop.DayRunner.step()` adds the physics, the money and the balancing around it.
+`pipeline.run_cycle(features, goal_config)` runs the middle of this from start to finish and
+never raises. `loop.DayRunner.step()` wraps it with the operator's commands, the physics, the
+money and the balancing.
 
 ```mermaid
 flowchart TB
@@ -71,6 +206,7 @@ flowchart TB
     V{"validator<br/>JSON? fields? ranges?"}
     FB["fallback_decision<br/>deterministic rules"]
     D["Decision<br/>battery_fraction, curtail,<br/>confidence, reasoning"]
+    A{"operator<br/>override / hold / approval"}
     G["guard<br/>battery limits + hard goals"]
     SP["setpoint<br/>this is the promise to the grid"]
     B{"is deviating<br/>charged for?"}
@@ -83,18 +219,33 @@ flowchart TB
     V -->|"timeout, llm_error, bad_json,<br/>missing_field, out_of_range, ..."| FB
     FB --> D
     F -.->|"feature_builder failed:<br/>the LLM is never called"| FB
-    D --> G --> SP --> B
+    D --> A --> G --> SP --> B
     B -->|"no"| SIM
     B -->|"yes"| BAL --> SIM
     SIM --> SET
 ```
 
-The LLM only ever advises. Every path ends at the guard, and the guard is the last word.
+The LLM only ever advises. Every path ends at the guard, even an operator override, and the
+guard always has the last word.
+
+### Backend runtime
+
+- **One worker thread owns the day.** It runs intervals at the requested speed with fixed
+  deadlines, so there is no drift. If an LLM call is slower than the slot, the next interval
+  starts right away.
+- **Reads never wait for the LLM.** After every interval the worker publishes a snapshot, and
+  the routes read that snapshot.
+- **Commands are applied between intervals**, never inside one. New goals, deleted goals and
+  plans take effect from the next interval.
+- **The SSE stream** pushes each new interval (`cycle`), every control change (`control`) and
+  every new alert (`alert`). It notices closed tabs and pings every 15 s.
+
+---
 
 ## Decision making
 
-The prompt walks the model through six steps in order; each may change the value, and the
-last change wins. All the comparisons are precomputed, so the model only compares labels.
+The prompt walks the model through six steps in order. Each step may change the value, and the
+last change wins. All comparisons are precomputed, so the model only has to compare labels.
 
 ```mermaid
 flowchart TB
@@ -111,8 +262,8 @@ flowchart TB
     S6 -.-> CURT --> OUT
 ```
 
-Then the guard checks the answer against the physics and the hard goals. It may clip
-anything, and whatever it applies is named in `applied_rules` so the dashboard can say why.
+Then the guard checks the answer against the physics and the hard goals. It may clip anything,
+and each rule it applies is listed in `applied_rules` so the dashboard can say why.
 
 ```mermaid
 flowchart LR
@@ -120,193 +271,274 @@ flowchart LR
     G --> R1["soc_min_limit, soc_max_limit<br/>stored energy stays inside the battery"]
     G --> R2["goal_X_forced_charge<br/>goal_X_blocked_discharge<br/>a reserve must still be reachable"]
     G --> R3["goal_X_blocked_export<br/>nothing sold below the minimum price"]
+    G --> R6["import_cap_discharge, import_cap_charge_limited<br/>peak shaving: grid import cap"]
     G --> R4["curtail_applied, curtail_forced_min_sell<br/>switching output off is a last resort"]
     G --> R5["no_soc_hold, guard_error_hold<br/>unknown state: hold"]
     R1 --> OUT["battery_setpoint_mw<br/>curtail_mw<br/>clipped"]
     R2 --> OUT
     R3 --> OUT
+    R6 --> OUT
     R4 --> OUT
     R5 --> OUT
 ```
 
-## Run a day
+### Explanations
 
-```powershell
-python -m loop                        # a made-up demo day, rule-based fallback only (instant)
-python -m loop --date 2026-06-15      # a real day: ML forecasts + ENTSO-E day-ahead prices
-python -m loop --date 2026-06-15 --llm --model qwen3.5:latest --goals "Store 6 MWh by 18:00"
-```
+Small models are unreliable at prose. Their sentences rarely hold numbers and sometimes
+contradict the action. So the explanation the operator reads (`dashboard/explain.py`) is built
+deterministically from the **settled** record. It has a one-sentence summary with numbers,
+supporting facts (grid, money, the next price peak), what the battery's energy was worth in that
+interval, what the safety layer changed, and the AI's own note, kept only if it does not
+contradict what happened.
 
-## Run the dashboard
+---
 
-From the repository root, run:
+## Operator control
 
-```powershell
-.\scripts\run_app.ps1
-```
+`control/operator.py` and `backend/desk.py` let a person step in at any time:
 
-This opens the backend and frontend in separate PowerShell windows. The dashboard is available at
-`http://localhost:5173`. The launcher uses rule-based decisions by default and does not require Ollama.
-To use Ollama, change `$UseLLM = $false` to `$UseLLM = $true` in `scripts/run_app.ps1`.
+| Tool | What it does |
+|---|---|
+| **Override** | Run a fixed setpoint until HH:MM. The guard still checks it |
+| **Emergency hold** | Battery idle and nothing exported until released. The AI is not asked |
+| **Autonomy** | `autonomous`: AI decisions run as they are. `supervised`: big or low-confidence moves wait for approval. `advisory`: every move waits. If no answer comes before the timeout, the battery holds |
+| **Plan ahead** | Set the battery for a specific upcoming interval (or skip it). The AI is not asked for that slot |
+| **Alerts** | Goal behind or unreachable, backup rules 3× in a row, price spike in the next 2 h, forecast off. Each alert clears itself when its condition clears and can be ignored until it comes back |
+| **Relax a goal** | Lower a reserve goal to what can still be stored by its deadline |
+| **Flag a decision** | Mark a decision you disagree with. The full situation is kept in `logs/decision_flags.jsonl` as material for future prompt examples |
+| **Audit log** | Every human action, kept in `logs/audit.jsonl` |
 
-### Run with Docker
+An interval set by a person comes back with `decision.source = "operator"`. Every interval also
+says what the operator did with it (`auto`, `approved`, `rejected`, `timeout`, `override`, `hold`).
 
-With Docker Desktop running, start the complete app from the repository root:
-
-```powershell
-docker compose up --build
-```
-
-This starts the API with LLM mode enabled, starts Ollama, and downloads the default
-`qwen3.5:4b` model automatically. The first run may take several minutes and requires
-enough disk space for the model. To use another Ollama model:
-
-```powershell
-$env:ENERGY_AGENT_MODEL = "qwen3:4b"
-docker compose up --build
-```
-
-Open `http://localhost:5173`. Stop it with `Ctrl+C`, or run:
-
-```powershell
-docker compose down
-```
-
-### macOS and Linux
-
-Without Docker, from the repository root (uses `.venv/bin/python` if it exists, otherwise
-`python3`; install the packages once with `python3 -m pip install -r requirements.txt`):
-
-```bash
-scripts/run_app.sh                          # rule-based decisions, no Ollama needed
-scripts/run_app.sh --llm --model qwen3:4b   # decisions by the LLM (Ollama running on the machine)
-scripts/run_app.sh --date 2026-06-15        # a real day
-```
-
-It starts the backend and the dashboard in one terminal (`http://localhost:5173`); `Ctrl+C` stops
-both. Without Node.js installed, the dashboard dev server runs in Docker instead.
-
-With Docker, the same commands as above work on macOS and Linux; set the model in the shell:
-
-```bash
-ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b docker compose up --build
-```
-
-On a Mac, Ollama inside Docker runs on the CPU only (no Apple GPU), so decisions are slow and
-often fall back to the rules after the 60 s timeout. To use the Ollama installed on the Mac
-instead (GPU, and the models you already pulled), add `docker-compose.host-ollama.yml`:
-
-```bash
-ollama pull qwen3:4b    # once; Ollama must be running on the Mac
-ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
-  docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
-```
-
-Stop it with `Ctrl+C`, or `docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml down`.
-
-### Linux
-
-Needs Docker Engine with the Compose plugin, version 2.24 or newer (`docker compose version`;
-the old `docker-compose` v1 does not read these files). Run Docker without `sudo` by adding
-yourself to the `docker` group once, then log out and back in:
-
-```bash
-sudo usermod -aG docker $USER
-```
-
-Then, from the repository root, the full app with Ollama in Docker:
-
-```bash
-ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b docker compose up --build
-```
-
-On Linux Ollama in Docker can use an **NVIDIA GPU** (install the NVIDIA Container Toolkit first;
-`docker run --rm --gpus all ubuntu nvidia-smi` checks it). Without a GPU, decisions run on the CPU
-and are slow:
-
-```bash
-ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
-  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-```
-
-To use an Ollama already installed on the machine instead, `docker-compose.host-ollama.yml` works on
-Linux too, but Ollama must listen on all interfaces, not only on 127.0.0.1:
-
-```bash
-sudo systemctl edit ollama.service   # add: [Service] / Environment="OLLAMA_HOST=0.0.0.0:11434"
-sudo systemctl restart ollama
-ENERGY_AGENT_MODEL=qwen3:4b ENERGY_AGENT_GOAL_MODEL=qwen3:4b \
-  docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build
-```
-
-Without Docker, `scripts/run_app.sh` works on Linux as on macOS (it needs Python 3 and, for the
-dashboard, Node.js or Docker). Open `http://localhost:5173` in every case.
-
-`--date` replays a real day end to end. The forecasts are issued at the day-ahead gate
-(12:00 local the day before), so the models only see what was known then, and the books
-are settled against what was actually measured — the printed forecast error is honest.
-`--plan` settles on the forecasts instead, for a day that has not happened yet.
+---
 
 ## Imbalance: paying for being wrong
 
-A setpoint is chosen on the forecast and the grid balances whatever really happens, so a
-forecast error leaves the site short or long of what it promised. `--imbalance` prices
-that gap the way a market does — energy promised and not delivered is bought back above
-the day-ahead price, energy delivered unasked is sold below it — and lets the battery
-defend the promise, within whatever the guard and its own limits allow:
+A setpoint is chosen on the forecast, and the grid balances whatever really happens. So a
+forecast error leaves the site short or long of what it promised. `--imbalance` prices that gap
+the way a market does. Energy promised but not delivered is bought back above the day-ahead
+price, and energy delivered without being asked for is sold below it. The battery then defends
+the promise, within whatever the guard and its own limits allow:
 
 ```powershell
 python -m loop --date 2026-06-15 --imbalance
 ```
 
-Without it the uncertainty the models work out is only a label: being wrong costs the
-same as being right, so there is nothing to hedge. With it the 10–90 % band has a price,
-and what the battery is really for becomes visible. The same hour of 2026-06-15, with the
-battery starting empty:
+Without this flag, uncertainty is only a label: being wrong costs the same as being right, so
+there is nothing to hedge. With it, the 10–90 % band has a price, and you can see what the
+battery is really for. The same hour of 2026-06-15, with the battery starting empty:
 
 | | profit | without a battery | the battery added |
 |---|---|---|---|
 | deviation not priced | −9.84 | +19.72 | **−29.55** |
 | deviation priced | −3.20 | −90.31 | **+87.11** |
 
-The battery's measured value changes sign: without one, nothing absorbs the error and the
-penalty lands in full. Prices come from `synthetic_out/prices.csv` (`synth_market.py`), so
-they are synthetic even on a real day; the day-ahead price stays the real ENTSO-E one and
-the pair is clamped so deviating can never pay better than delivering the plan.
+The battery's measured value flips sign. Without a battery nothing absorbs the error, so the
+full penalty lands on the site. Imbalance prices come from `synthetic_out/prices.csv`
+(`synth_market.py`), so they are synthetic even on a real day. The day-ahead price stays the
+real ENTSO-E one, and the pair is clamped so that deviating can never pay better than
+delivering the plan.
 
-| Module | Role |
+---
+
+## Forecasting (ML 1 + ML 2)
+
+`predictions/` holds two models that forecast Romania's national demand and production for
+**any 15-minute timestamp up to 7 days ahead**, each with a 10–90 % range:
+
+| Model | Class | Predicts |
+|---|---|---|
+| ML 1, demand | `DemandForecaster` | total load |
+| ML 2, production | `ProductionForecaster` | solar, wind, other production; total = sum |
+
+- **One model for every lead time.** `lead_hours` is a feature, and features only use data
+  from before `issued_at`, so training, backtesting and the live app share one code path that
+  cannot see the future.
+- **Learns a correction to a simple base forecast** (last value blending into a seasonal value),
+  scaled to ratios. This lets it follow growth in installed capacity: solar's 2026 peak is
+  almost double 2025's.
+- **LightGBM quantile models** (10/50/90 %), with ranges calibrated per lead bucket on a held-out
+  window so the band really covers about 80 %.
+
+**2026 backtest** (Jan 1 – Nov 7, never seen in training), MAE in MW:
+
+| Lead time | 15 min | 1 h | 6 h | 1 day | 3 days | 7 days |
+|---|---|---|---|---|---|---|
+| Demand | 49 (0.8 %) | 109 (1.9 %) | 218 (3.8 %) | 237 (4.1 %) | 263 (4.5 %) | 291 (5.0 %) |
+| Solar | 18 | 44 | 89 | 87 | 90 | 92 |
+| Wind | 22 | 75 | 202 | 200 | 198 | 201 |
+| Total production | 74 (1.4 %) | 189 (3.6 %) | 358 (6.9 %) | 354 (6.8 %) | 380 (7.3 %) | 394 (7.6 %) |
+
+At a one-day lead, demand beats the better naive baseline by 44 %, solar by 41 % and wind by
+65 %. Full method, tables and plots are in [`predictions/README.md`](predictions/README.md) and
+`predictions/train_and_evaluate.ipynb`.
+
+On a real day (`--date`), forecasts are issued at the **day-ahead gate** (12:00 local the day
+before), so the models only see what was known then. `loop.SiteScale` scales the national
+figures down to site size, and the books are settled against what was actually measured, so the
+reported forecast error is honest. `--plan` settles on the forecasts instead, for a day that has
+not happened yet.
+
+---
+
+## Data
+
+| File | Source | Built by |
+|---|---|---|
+| `data/energy_price.csv` | ENTSO-E day-ahead price, Romania | `energy_price.py` |
+| `data/total_load_day_ahead_actual/…` | ENTSO-E total load (day-ahead + actual) | `total_load_day_ahead_actual.py` |
+| generation per production type | ENTSO-E actual generation | `actual_generation_per_production_type.py` |
+| `dataset.csv` | load + generation, aligned on UTC | `build_dataset.py` |
+| `predictions/dataset.csv` | the above + Open-Meteo weather + calendar | `predictions/build_dataset.py` |
+| `synthetic_out/*.csv` | synthetic portfolio, imbalance prices, producer offers | `synth_market.py` |
+| `plots/*.png` | overview, hourly profile, correlation heatmap | `visualize_data.py` |
+
+The ENTSO-E scrapers (`entsoe_export.py`) split a range into 7-day windows, resume after an
+interruption, and need the `Authorization: Bearer` token from a logged-in browser session in
+`ENTSOE_TOKEN`. All the data the app needs is already in the repository, so you do not have to
+download anything to run it.
+
+```powershell
+$env:ENTSOE_TOKEN = "eyJ..."
+python energy_price.py --start 2026-01-01 --end 2026-11-07
+python build_dataset.py
+python predictions/build_dataset.py        # --refresh to re-download the weather
+python synth_market.py dataset.csv synthetic_out
+python visualize_data.py
+```
+
+---
+
+## Command line
+
+**Run a day in the terminal** (`python -m loop`) prints each interval and a day summary:
+
+```powershell
+python -m loop                                   # made-up demo day, rule-based fallback (instant)
+python -m loop --date 2026-09-28                 # a real day: ML forecasts + ENTSO-E prices
+python -m loop --date 2026-09-28 --llm --model qwen3.5:4b --goals "Store 6 MWh by 18:00"
+python -m loop --date 2026-06-15 --imbalance --max-import 2 --out logs/day.jsonl
+```
+
+Options: `--llm`, `--model`, `--goals`, `--start-soc`, `--start`, `--until`, `--speed`,
+`--seed`, `--date`, `--plan`, `--imbalance`, `--max-import`, `--out`, `--quiet`.
+
+**Run the backend** (`python -m backend`):
+
+```bash
+python -m backend --no-llm --start 11:15        # rule-based, no Ollama
+python -m backend --model qwen3:4b --date 2026-09-28
+cd frontend && npm run dev:api                   # dashboard against http://localhost:8000
+```
+
+| Option | Default | |
+|---|---|---|
+| `--host`, `--port` | `127.0.0.1`, `8000` | |
+| `--model` | `ENERGY_AGENT_MODEL` | Ollama model for decisions and goal parsing |
+| `--no-llm` | off | rule-based decisions and rule-based goal parser |
+| `--date` | demo day | a real day, `YYYY-MM-DD` |
+| `--plan` / `--imbalance` | off | settle on forecasts / charge for deviations (with `--date`) |
+| `--start` | `00:00` | pre-run the day up to this time |
+| `--start-soc` | `4.0` | stored energy at 00:00, MWh |
+| `--max-import` | unset | grid import cap for peak shaving, MW |
+| `--goals-path` | `data/goals.json` | saved goals. If empty, it starts with "Maximise profit", "Store 6 MWh by 18:00", "Never sell below 50 EUR/MWh" |
+| `--log` | none | every interval record as JSONL |
+| `--operator-log-dir` | `logs` | audit log and decision flags |
+
+To run the forecasting models on their own over HTTP: `uvicorn predictions.api:app --port 8000`
+(docs at `/docs`).
+
+---
+
+## Configuration
+
+Everything is read from environment variables in `config.Settings`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server |
+| `ENERGY_AGENT_MODEL` | `qwen3.5:4b` | decision model |
+| `ENERGY_AGENT_GOAL_MODEL` | the decision model | goal-parsing model |
+| `ENERGY_AGENT_TIMEOUT_S` | `60` | LLM timeout. On timeout the rule-based fallback decides |
+| `ENERGY_AGENT_NUM_CTX` | `8192` | context length sent to Ollama (the prompt is about 2.5k tokens) |
+| `ENERGY_AGENT_THINK` | `false` | Qwen3 "thinking" mode |
+| `ENERGY_AGENT_BATTERY_MWH` | `10` | battery capacity |
+| `ENERGY_AGENT_BATTERY_MW` | `3` | battery max power |
+| `ENERGY_AGENT_MAX_IMPORT_MW` | unset | peak-shaving import cap |
+| `ENERGY_AGENT_GOALS_PATH` | `data/goals.json` | saved goals |
+| `ENERGY_AGENT_SETTLEMENT_LOG` | `logs/settlement.jsonl` | settlement log (empty = off) |
+| `ENERGY_AGENT_LLM_LOG` | `logs/llm_calls.jsonl` | every LLM call (empty = off) |
+| `ENERGY_AGENT_DATE` | `2026-09-28` | the day Docker Compose runs |
+
+---
+
+## HTTP API
+
+The backend serves exactly the shapes declared in `frontend/src/api/types.ts`.
+`dashboard/contract.py` builds them, and a test checks every live response against `types.ts`
+in both directions, so the two cannot drift apart.
+
+| Area | Routes |
 |---|---|
-| `predictions/` | ML 1 + ML 2: demand and production forecasts (solar, wind, total) with 10–90 % ranges for any 15-min timestamp up to 7 days ahead; `DemandForecaster`, `ProductionForecaster` and an HTTP API (see `predictions/README.md`) |
-| `loop/` | The clock: one day, interval by interval. `demo_day()` makes a day up; `real_day()` builds one from the ML models and the real price file, scaled from national to site size by `SiteScale` |
-| `price_api/` | Mock energy price API: day-ahead + imbalance prices per 15 min, real where the CSVs cover the day, generated (seeded by date) where they do not; `real_day()` calls it when `PRICE_API_URL` is set (see `price_api/README.md`) |
-| `dashboard/` | The loop's objects as the shapes `frontend/src/api/types.ts` declares, so the API layer has nothing left to translate |
-| `backend/` | FastAPI: the dashboard's routes and the SSE stream, running the day loop on a worker thread |
-| `simulator/` | The site's physics: what the battery, the export limiter and the grid actually did in one interval |
-| `goal_parser/` | Plain-language goals → `GoalConfig`; `GoalStore` keeps the active config |
-| `feature_builder/` | All the arithmetic: section 8 of the prompt and goal progress |
+| State | `GET /api/state`, `GET /api/day`, `GET /api/metrics`, `GET /api/health` |
+| Goals | `GET /api/goals`, `POST /api/goals {text}`, `DELETE /api/goals/{id}`, `POST /api/goals/{id}/relax` |
+| Control | `GET /api/control`, `POST`/`DELETE /api/override`, `POST`/`DELETE /api/hold`, `PUT /api/autonomy`, `POST /api/approvals/{id}` |
+| Desk | `GET /api/alerts`, `POST /api/alerts/{id}/ignore`, `GET /api/upcoming`, `PUT`/`DELETE /api/plan/{time}`, `GET /api/flags`, `POST`/`DELETE /api/decisions/{time}/flag`, `GET /api/audit` |
+| Report | `GET /api/report`, `POST /api/report/summary` |
+| Simulation | `POST /api/sim/run {speed}` (0 pauses), `POST /api/sim/reset`, `POST /api/sim/next-day` |
+| Live | `GET /api/stream`: SSE events `cycle`, `control`, `alert` |
+
+Details: [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).
+
+---
+
+## Project layout
+
+| Path | Role |
+|---|---|
+| `predictions/` | ML 1 + ML 2: demand and production forecasts with 10–90 % ranges, training notebook, backtest reports, HTTP API |
+| `loop/` | The clock: one day, interval by interval. `demo_day()` makes a day up, and `real_day()` builds one from the models and real prices, scaled by `SiteScale` |
+| `pipeline.py` | One control cycle: features → prompt → LLM → validator/fallback → guard |
+| `feature_builder/` | All the arithmetic: break-even, price zones, limits, uncertainty, imbalance risk, goal progress |
 | `prompt_assembly/` | Rules, solved examples, current situation and USER GOALS → one prompt |
-| `llm/` | The shared Ollama client and the decision agent |
-| `validator/` | Parses and checks the LLM output; rule-based fallback on any failure |
-| `guard/` | Physical limits and hard goals → safe battery setpoint and curtailment |
-| `settlement/` | The cashier: grid import/export, energy cost, wear, profit and new SoC per interval (on actual values); goal status (met / missed / violated, "6 MWh reached at 16:00"); day metrics, JSONL log, goal cost vs a profit-only run |
-| `battery.py` | `BatteryConfig`, the one battery definition |
-| `config.py` | `Settings`: Ollama host, models, timeouts, battery (from environment variables) |
-| `common.py` | Small shared helpers |
+| `llm/` | Shared Ollama client and the decision agent |
+| `validator/` | Parses and checks the LLM output, with a rule-based fallback on any failure |
+| `guard/` | Physical limits, hard goals and the import cap → a safe setpoint and curtailment |
+| `goal_parser/` | Plain-language goals → `GoalConfig` (LLM with a rule parser behind it). `GoalStore` keeps and saves them |
+| `control/` | Operator control: override, emergency hold, autonomy levels and approvals |
+| `simulator/` | The site's physics: what the battery, export limiter and grid actually did |
+| `settlement/` | The cashier: grid trade, energy cost, wear, imbalance, profit, goal status, day metrics, JSONL log |
+| `dashboard/` | The loop's objects as API payloads (`contract.py`), per-decision explanations (`explain.py`), the day report (`report.py`) |
+| `backend/` | FastAPI app, the worker thread that runs the day (`service.py`) and the operator desk (`desk.py`) |
+| `frontend/` | The operator dashboard (React + TypeScript), with a full in-browser mock of the API |
+| `battery.py`, `config.py`, `common.py` | Battery definition, settings from the environment, shared helpers |
+| `data/`, `synthetic_out/`, `plots/` | Input data, synthetic market data, exploratory plots |
+| `*.py` at the root | ENTSO-E scrapers, dataset builder, synthetic market, plots |
+| `tests/` and `*/tests/` | The test suite |
+| `Dockerfile`, `docker-compose*.yml`, `run_app.ps1`, `run_app.sh` | Ways to run it |
+| `LLM_energy_agent_plan.pdf` | The original design plan |
 
-Run the tests with `pytest -q` (see `tests/README.md`).
+---
 
-## Data visualization
+## Tests
 
-Create and activate the virtual environment, then install the dependencies:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+```bash
+pytest -q
 ```
 
-Generate the parsed dataset and plots:
+`pytest.ini` collects `tests/`, `guard/tests/`, `validator/tests/` and `settlement/tests/`. The
+suite runs **without Ollama**, because LLM calls are replaced by fake clients. The two
+`*_llm.py` tests run against the real model and are skipped when Ollama is not available. The
+suite covers the pipeline, prompt assembly, goal parsing and the goal store, the guard, the
+validator, the simulator and settlement, imbalance, peak shaving, real days, the backend routes
+and the SSE stream, operator control and the desk, explanations and the report, and the API
+contract against `types.ts`. See [`tests/README.md`](tests/README.md).
 
-```powershell
-python scripts/visualize_data.py
-```
+Frontend type check: `cd frontend && npm run typecheck`.
+
+---
+
+## License
+
+[MIT](LICENSE)
