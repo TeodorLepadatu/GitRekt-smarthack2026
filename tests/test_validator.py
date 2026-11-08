@@ -1,6 +1,6 @@
 """Tests for validator, fallback and decide.
 
-Run from the repo root:   python -m unittest discover -s validator/tests -t .
+Run from the repo root:   python -m pytest tests/test_validator.py
 """
 
 import json

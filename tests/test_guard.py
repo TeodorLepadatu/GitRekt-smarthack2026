@@ -1,6 +1,6 @@
 """Tests for the guard layer.
 
-Run from the repo root:   python -m unittest discover -s guard/tests -t .
+Run from the repo root:   python -m pytest tests/test_guard.py
 """
 
 import unittest

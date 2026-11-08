@@ -1,8 +1,7 @@
 # tests
 
-Tests for the goal parser, the decision step, prompt assembly and the full pipeline. They run
-**without Ollama**: every LLM call is replaced by a fake client that returns a fixed reply. The
-guard and validator keep their own tests in `guard/tests/` and `validator/tests/`.
+All the project's Python tests, in one folder. They run **without Ollama**: every LLM call is
+replaced by a fake client that returns a fixed reply.
 
 ## Running
 
@@ -12,8 +11,8 @@ From the repository root:
 pytest -q
 ```
 
-`pytest.ini` puts the repository root on `sys.path` and collects `tests/`, `guard/tests/`,
-`validator/tests/` and `settlement/tests/`, so this one command runs everything.
+`pytest.ini` puts the repository root on `sys.path` and collects `tests/`, so this one command
+runs everything.
 
 ## Files
 
@@ -25,6 +24,9 @@ pytest -q
 | `test_goal_parser_llm.py` | Goal parser against the real model; skipped unless Ollama has `Settings().goal_model` |
 | `test_goal_store.py` | `GoalStore`: parse only on change, keep the old config while questions are open, save/reload |
 | `test_decision.py` | `DecisionAgent` sends the prompt with the schema; Ollama errors reach the validator as `llm_error` |
+| `test_validator.py` | Validator: JSON parsing, required fields, ranges, fallback decision |
+| `test_guard.py` | Guard: battery limits and hard goals (reserve, minimum sell) override the decision |
+| `test_settlement.py` | Settlement: money per interval, goal status, day totals |
 | `test_simulator.py` | Site simulator: battery limits, grid trade, curtailment, energy balance, full cycles |
 | `test_simulator_settlement.py` | Settlement uses exactly the simulator's physics; ledger and simulator stay in step over a day loop |
 | `test_loop.py` | The clock: a whole day through feature builder → pipeline → simulator → settlement, failures, real-time pacing, CLI |
