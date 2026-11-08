@@ -16,6 +16,7 @@
     POST   /api/approvals/{id} {approve}         answer the AI's waiting proposal
     POST   /api/sim/run {speed} speed 0 pauses
     POST   /api/sim/reset       back to 00:00
+    POST   /api/sim/next-day {speed}   the next date, from the energy stored now (409 if it cannot be built)
     GET    /api/health
 
 The operator's desk (backend/desk.py):
@@ -56,6 +57,10 @@ class GoalIn(BaseModel):
 
 class RunIn(BaseModel):
     speed: float = Field(default=60, ge=0, le=100_000)
+
+
+class NextDayIn(BaseModel):
+    speed: float = Field(default=0, ge=0, le=100_000)
 
 
 class OverrideIn(BaseModel):
@@ -179,6 +184,10 @@ def create_app(backend: Backend, *, heartbeat_s: float = 15.0) -> FastAPI:
     @app.post("/api/sim/reset")
     def sim_reset() -> dict:
         return backend.reset()
+
+    @app.post("/api/sim/next-day")
+    def sim_next_day(body: NextDayIn) -> dict:
+        return _desk(backend.next_day, body.speed)
 
     # ------------------------------------------------------------ operator desk
 

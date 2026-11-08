@@ -35,10 +35,10 @@ from control import Autonomy, OperatorControl, autonomy_from
 from dashboard import day_payload, goals_payload, interval_payload, metrics_payload, state_payload
 from feature_builder import build_features
 from goal_parser import GoalStore
-from goal_parser.rules import parse_raw
 from guard import guard
 from loop import DayInput, DayRunner, demo_day
 from loop.day import operator_decision
+from settlement.goals import _definition as goal_definition
 from validator import fallback_decision
 
 from .desk import AlertBook, AuditLog, FlagBook, Overrides, alert_conditions, relaxed_sentence
@@ -69,6 +69,7 @@ class _Snapshot:
     goal_summary: list[dict] = field(default_factory=list)  # ledger.goal_summary()
     stored_mwh: float = 0.0
     day_over: bool = False
+    tracked_goals: list[dict] = field(default_factory=list)  # the goal defs goal_summary belongs to
 
 
 class Backend:
@@ -85,8 +86,13 @@ class Backend:
         max_import_mw: Optional[float] = None,
         autonomy: Optional[Autonomy] = None,
         operator_log_dir: Optional[str] = None,
+        next_day: Optional[Callable[[str], DayInput]] = None,
     ):
         self.goals = goal_store
+        # Builds the day for a "YYYY-MM-DD" date, for "Run the next day"; None = one day only.
+        self.next_day_factory = next_day
+        self._day_start_soc = start_soc_mwh     # carried over from the previous day by next_day()
+        self._building_next = threading.Lock()  # building a real day takes seconds: one at a time
         self.max_import_mw = max_import_mw  # grid import cap (peak shaving); None = none
         self.llm_call = llm_call
         self.cfg = battery or BatteryConfig()
@@ -121,7 +127,9 @@ class Backend:
 
     def state(self) -> dict:
         status = self.sim_status()
-        return state_payload(self._view(), running=status["running"], speed=status["speed"])
+        out = state_payload(self._view(), running=status["running"], speed=status["speed"])
+        out["sim"].update(day_over=status["day_over"], date=status["date"], next_day=status["next_day"])
+        return out
 
     def day(self) -> dict:
         out = day_payload(self._view())
@@ -201,7 +209,9 @@ class Backend:
 
     def sim_status(self) -> dict:
         with self._cond:
-            return {"running": self._speed > 0 and not self._snap.day_over, "speed": self._speed}
+            return {"running": self._speed > 0 and not self._snap.day_over, "speed": self._speed,
+                    "day_over": self._snap.day_over, "date": self.date,
+                    "next_day": self.next_day_factory is not None}
 
     def _view(self) -> SimpleNamespace:
         """The latest snapshot dressed as a runner, for dashboard/contract.py."""
@@ -209,7 +219,7 @@ class Backend:
         return SimpleNamespace(
             cfg=self.cfg, day=snap.day, curve=snap.curve, records=snap.records,
             sim=SimpleNamespace(stored_mwh=snap.stored_mwh),
-            ledger=SimpleNamespace(metrics=lambda: snap.metrics, goal_summary=lambda: snap.goal_summary,
+            ledger=SimpleNamespace(metrics=lambda: snap.metrics, goal_summary=lambda: self._goal_states(snap),
                                    profit_eur=snap.metrics.get("profit_today_eur", 0.0)),
             goal_config=self.goals.config,   # the active goals, including ones the worker applies next
         )
@@ -319,6 +329,38 @@ class Backend:
         self.wait_idle()
         return self.sim_status()
 
+    def next_day(self, speed: float = 0.0) -> dict:
+        """Move on to the next calendar date, starting with the energy stored now, and run
+        at ``speed`` (0 = stay paused at 00:00). Conflict if there is no next day to build."""
+        if self.next_day_factory is None:
+            raise Conflict("this backend runs a single day")
+        if not self._building_next.acquire(blocking=False):
+            raise Conflict("the next day is already being prepared")
+        try:
+            try:
+                date = (_dt.date.fromisoformat(self.date) + _dt.timedelta(days=1)).isoformat()
+            except ValueError:
+                raise Conflict(f"cannot tell the day after {self.date!r}")
+            try:
+                day = self.next_day_factory(date)   # outside the lock: forecasts take a while
+            except Exception as exc:
+                raise Conflict(f"cannot prepare {date}: {exc}")
+            with self._cond:
+                previous, stored = self.date, self._snap.stored_mwh
+                self.day_factory = lambda: day
+                self.date = date
+                self._day_start_soc = stored
+                self._log("sim_next_day", f"Moved on from {previous} to {date}",
+                          {"from": previous, "to": date, "start_soc_mwh": round(stored, 3)})
+                self._speed = max(0.0, float(speed))
+                self._pending_reset = True
+                self._cond.notify_all()
+            self.control.new_day()          # the worker may be waiting for an approval: let it go
+            self.wait_idle()
+        finally:
+            self._building_next.release()
+        return self.sim_status()
+
     def relax_goal(self, goal_id: str) -> dict:
         """Lower a reserve goal that is behind to what can still be stored by its deadline."""
         with self._cond:
@@ -329,7 +371,7 @@ class Backend:
             raise GoalNotFound(goal_id)
         if goal.get("type") != "reserve" or goal.get("mwh") is None:
             raise Conflict("only an energy reserve goal can be relaxed")
-        state = next((g for g in snap.goal_summary if str(g.get("id")) == goal_id), {})
+        state = next((g for g in self._goal_states(snap) if str(g.get("id")) == goal_id), {})
         target = float(goal["mwh"])
         hours = state.get("hours_left")
         if hours is None:
@@ -545,7 +587,7 @@ class Backend:
         self.overrides.clear()          # overrides, alerts and flags belong to one day; the audit stays
         self.alerts.clear()
         self.flags.clear()
-        self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self.start_soc_mwh,
+        self._runner = DayRunner(self._day, self.goals.config, start_soc_mwh=self._day_start_soc,
                                  battery=self.cfg, llm_call=self.llm_call, log_path=self.log_path,
                                  max_import_mw=self.max_import_mw, control=self.control,
                                  override_for=self.overrides.get)
@@ -557,14 +599,15 @@ class Backend:
         r = self._runner
         self._snap = _Snapshot(day=self._day, curve=r.curve, records=list(r.records),
                                metrics=r.ledger.metrics(), goal_summary=r.ledger.goal_summary(),
-                               stored_mwh=r.sim.stored_mwh, day_over=r.done)
+                               stored_mwh=r.sim.stored_mwh, day_over=r.done,
+                               tracked_goals=[dict(g) for g in r.ledger.goals.goals])
 
     def _refresh_alerts(self) -> list[dict]:
         """Called with the lock held, after an interval: the alerts raised just now."""
         snap = self._snap
         try:
             conditions = alert_conditions(
-                snap.records, snap.goal_summary, self.goals.config.to_dict().get("goals") or [],
+                snap.records, self._goal_states(snap), self.goals.config.to_dict().get("goals") or [],
                 list(snap.curve.prices), [snap.curve.time_at(i) for i in range(snap.day.n)])
         except Exception:                           # alerts are help, never a reason to stop
             return []
@@ -575,6 +618,27 @@ class Backend:
         snap = self._snap
         return self.audit.add(action, summary, sim_time=snap.records[-1]["time"] if snap.records else None,
                               date=self.date, detail=detail)
+
+    def _goal_states(self, snap: "_Snapshot") -> list[dict]:
+        """The snapshot's goal states under the ids of the goals active now.
+
+        A goal change reaches the runner only between intervals, and the parser
+        renumbers g1, g2, ... on every change, so the snapshot's ids can point at
+        other goals for a moment. Match by what a goal asks for instead (as the
+        tracker does); a removed goal drops out, a new one has no state yet.
+        """
+        by_def = {}
+        states = {str(st.get("id")): st for st in snap.goal_summary}
+        for g in snap.tracked_goals:
+            st = states.get(str(g.get("id")))
+            if st is not None:
+                by_def[goal_definition(g)] = st
+        out = []
+        for g in self.goals.config.to_dict()["goals"]:
+            st = by_def.get(goal_definition(g))
+            if st is not None:
+                out.append({**st, "id": g["id"], "source_text": g.get("source_text") or st.get("source_text")})
+        return out
 
     def _future_index(self, time: str) -> int:
         """The index of an interval that has not been decided yet."""
@@ -602,23 +666,13 @@ class Backend:
 
     def _objective_sentences(self) -> list[tuple[int, bool]]:
         """(index, also_has_goals) of every sentence that states an objective."""
-        out = []
-        for i, sentence in enumerate(self.goals.sentences):
-            raw = parse_raw(sentence)
-            if raw["objective"] is not None:
-                out.append((i, any(g.get("type") in ("reserve", "min_sell_price") for g in raw["goals"])))
-        return out
+        store = self.goals
+        return [(i, store.goal_count_of(i) > 0) for i in range(len(store.sentences))
+                if store.objective_of(i) is not None]
 
     def _sentence_of(self, goal_id: str) -> Optional[int]:
-        """The sentence a goal came from, found by the goal's own words."""
-        goal = next((g for g in self.goals.config.to_dict()["goals"] if g["id"] == goal_id), None)
-        if goal is None:
-            return None
-        src = goal.get("source_text", "").strip().lower()
-        for i, sentence in enumerate(self.goals.sentences):
-            if src and src in sentence.lower():
-                return i
-        return None
+        """The sentence a goal came from."""
+        return self.goals.sentence_of(goal_id)
 
 
 def _mw_verb(mw: float) -> str:

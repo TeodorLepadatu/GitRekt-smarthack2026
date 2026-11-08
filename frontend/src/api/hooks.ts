@@ -117,6 +117,11 @@ export function useSimRun() {
   return useMutation({ mutationFn: api.simRun, onSuccess: invalidate });
 }
 
+export function useSimNextDay() {
+  const invalidate = useInvalidateAll();
+  return useMutation({ mutationFn: api.simNextDay, onSuccess: invalidate });
+}
+
 export function useSimReset() {
   const invalidate = useInvalidateAll();
   return useMutation({ mutationFn: api.simReset, onSuccess: invalidate });

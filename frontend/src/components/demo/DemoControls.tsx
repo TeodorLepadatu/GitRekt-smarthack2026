@@ -1,21 +1,24 @@
 import { useState } from "react";
-import { useSimReset, useSimRun, useStateSnapshot } from "@/api/hooks";
+import { useSimNextDay, useSimReset, useSimRun, useStateSnapshot } from "@/api/hooks";
 import { cn } from "@/lib/utils";
 
 const SPEEDS = [1, 60, 600];
 
 /**
  * Strip along the bottom edge for the hackathon demo: run the simulated day
- * fast, or restart it. POST /api/sim/run {speed}; speed 0 pauses.
+ * fast, restart it, or move on to the next date once it is over.
+ * POST /api/sim/run {speed}; speed 0 pauses. POST /api/sim/next-day {speed}.
  */
 export function DemoControls() {
   const state = useStateSnapshot();
   const run = useSimRun();
   const reset = useSimReset();
+  const nextDay = useSimNextDay();
   const sim = state.data?.sim ?? { running: false, speed: 0 };
   const [picked, setPicked] = useState(600);
   const speed = sim.running && sim.speed ? sim.speed : picked;
-  const busy = run.isPending || reset.isPending;
+  const busy = run.isPending || reset.isPending || nextDay.isPending;
+  const dayOver = !!sim.day_over && !sim.running;
 
   function pick(s: number) {
     setPicked(s);
@@ -28,9 +31,15 @@ export function DemoControls() {
     <div className="border-t border-rule-strong bg-wash text-sm" aria-label="Simulation controls">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-6 py-2.5 text-base lg:px-12">
         <span className="label">Simulation</span>
-        <button type="button" className={cn(btn, "font-semibold")} disabled={busy} onClick={() => run.mutate(sim.running ? 0 : speed)}>
-          {sim.running ? "Pause" : "Run the rest of the day"}
-        </button>
+        {dayOver && sim.next_day ? (
+          <button type="button" className={cn(btn, "font-semibold")} disabled={busy} onClick={() => nextDay.mutate(speed)}>
+            {nextDay.isPending ? "Preparing the next day…" : "Run the next day"}
+          </button>
+        ) : (
+          <button type="button" className={cn(btn, "font-semibold")} disabled={busy} onClick={() => run.mutate(sim.running ? 0 : speed)}>
+            {sim.running ? "Pause" : dayOver ? "Run the day again" : "Run the rest of the day"}
+          </button>
+        )}
         <span className="flex items-center gap-2" role="radiogroup" aria-label="Speed">
           <span className="text-ink-3">speed</span>
           {SPEEDS.map((s) => (
@@ -51,8 +60,10 @@ export function DemoControls() {
         <button type="button" className={cn(btn, "text-ink-2")} disabled={busy} onClick={() => reset.mutate()}>
           Restart at 00:00
         </button>
+        {nextDay.isError && <span className="text-bad">{nextDay.error.message}</span>}
         <span className="ml-auto hidden text-xs text-ink-3 md:inline">
-          {sim.running ? `Running at ${sim.speed}×` : "Paused"} · demo only, not shown to operators
+          {sim.date ? `${sim.date} · ` : ""}
+          {sim.running ? `Running at ${sim.speed}×` : dayOver ? "Day finished" : "Paused"} · demo only, not shown to operators
         </span>
       </div>
     </div>

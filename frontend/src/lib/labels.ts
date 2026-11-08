@@ -246,10 +246,3 @@ export function upNextText(slots: DaySlot[], now: string | null): string | null 
   if (!pick) return "No price spikes or negative prices expected for the rest of today.";
   return pick.s === future[0] ? `From now, ${pick.text}` : `From ${pick.s.time}, ${pick.text}`;
 }
-
-export const GOAL_EXAMPLES = [
-  "Maximise profit",
-  "Store 6 MWh by 18:00",
-  "Keep 2 MWh backup overnight",
-  "Never sell below €50/MWh",
-];

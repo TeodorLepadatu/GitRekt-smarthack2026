@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime as _dt
 import logging
 import sys
 import threading
@@ -68,18 +69,24 @@ def main(argv: list[str] | None = None) -> None:
         store.set(DEFAULT_GOALS)
 
     if args.date:
+        def build(date: str):
+            return real_day(date, scale=SiteScale(), with_actuals=not args.plan, imbalance=args.imbalance)
+
         try:  # built once: a reset replays the same day
-            day = real_day(args.date, scale=SiteScale(), with_actuals=not args.plan,
-                           imbalance=args.imbalance)
+            day = build(args.date)
         except RealDayError as exc:
             sys.exit(f"cannot build {args.date}: {exc}")
         day_factory = lambda: day  # noqa: E731
+        next_day = build
     else:
         day_factory = demo_day
+        # every next demo day has its own weather and prices, the same ones for everybody
+        next_day = lambda date: demo_day(seed=_dt.date.fromisoformat(date).toordinal(), date=date)  # noqa: E731
 
     backend = Backend(store, llm_call=llm_call, battery=settings.battery, start_soc_mwh=args.start_soc,
                       day_factory=day_factory, log_path=args.log, operator_log_dir=args.operator_log_dir or None,
-                      max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import)
+                      max_import_mw=settings.max_import_mw if args.max_import is None else args.max_import,
+                      next_day=next_day)
     if args.date:
         backend.date = args.date
     if args.start != "00:00":

@@ -118,6 +118,12 @@ export function isDecided(slot: DaySlot): slot is Interval {
 export interface SimStatus {
   running: boolean;
   speed: number;
+  /** All 96 intervals of the day have run. */
+  day_over?: boolean;
+  /** The simulated date, "YYYY-MM-DD". */
+  date?: string;
+  /** The backend can move on to the next date (POST /api/sim/next-day). */
+  next_day?: boolean;
 }
 
 /** GET /api/state */

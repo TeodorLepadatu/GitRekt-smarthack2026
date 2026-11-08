@@ -165,6 +165,7 @@ def _interpret(raw: Any, *, capacity_mwh: float | None, source: str) -> ParseRes
         config=GoalConfig(objective=raw.get("objective") or DEFAULT_OBJECTIVE, goals=goals),
         clarifications=clarifications,
         source=source,
+        objective_given=raw.get("objective") or None,
     )
 
 

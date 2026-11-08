@@ -71,6 +71,7 @@ export const api = {
   metrics: () => request<Metrics>("GET", "/api/metrics"),
   simRun: (speed: number) => request<unknown>("POST", "/api/sim/run", { speed }),
   simReset: () => request<unknown>("POST", "/api/sim/reset"),
+  simNextDay: (speed: number) => request<unknown>("POST", "/api/sim/next-day", { speed }),
 
   control: () => request<ControlState>("GET", "/api/control"),
   setOverride: (body: { setpoint_mw: number; until: string }) => request<ControlState>("POST", "/api/override", body),

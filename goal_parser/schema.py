@@ -171,6 +171,9 @@ class ParseResult:
     config: GoalConfig
     clarifications: list[Clarification] = field(default_factory=list)
     source: str = "rules"  # "llm" | "rules" | "stored" (unchanged goals, from GoalStore)
+    # The objective the text itself states (None = not stated; config.objective then
+    # holds the default). GoalStore uses it to combine sentences parsed one by one.
+    objective_given: str | None = None
 
     @property
     def needs_clarification(self) -> bool:

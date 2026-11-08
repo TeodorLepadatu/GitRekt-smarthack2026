@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useAddGoal, useDeleteGoal, useGoals } from "@/api/hooks";
 import { PanelError, PanelLoading } from "@/components/common/PanelState";
-import { GOAL_EXAMPLES } from "@/lib/labels";
 import { GoalItem } from "./GoalItem";
 
 export function GoalsPanel() {
@@ -15,15 +14,17 @@ export function GoalsPanel() {
     const t = value.trim();
     if (!t || add.isPending) return;
     setExchange(null);
+    setText(""); // the goal shows in the list at once, while it is being read
     try {
       const res = await add.mutateAsync(t);
-      if (res.question) setExchange({ asked: t, reply: res.question, ok: false });
-      else {
-        setText("");
+      if (res.question) {
+        setText(t); // back in the box, so it can be made clearer
+        setExchange({ asked: t, reply: res.question, ok: false });
+      } else {
         setExchange({ asked: t, reply: "Added. It is checked from the next interval on.", ok: true });
       }
     } catch {
-      /* shown below via add.isError */
+      setText(t); /* the error is shown below via add.isError */
     }
   }
 
@@ -31,6 +32,9 @@ export function GoalsPanel() {
     e.preventDefault();
     void submit(text);
   };
+
+  const pendingText = add.isPending ? add.variables : undefined;
+  const list = goals.data ?? [];
 
   return (
     <div className="grid gap-x-14 gap-y-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -56,25 +60,6 @@ export function GoalsPanel() {
               {add.isPending ? "Adding…" : "Add"}
             </button>
           </div>
-          <p className="text-sm text-ink-3">
-            For example:{" "}
-            {GOAL_EXAMPLES.map((ex, i) => (
-              <span key={ex}>
-                <button
-                  type="button"
-                  disabled={add.isPending}
-                  onClick={() => {
-                    setText(ex);
-                    void submit(ex);
-                  }}
-                  className="text-ink-2 underline decoration-rule-strong underline-offset-2 hover:text-ink hover:decoration-ink"
-                >
-                  {ex}
-                </button>
-                {i < GOAL_EXAMPLES.length - 1 ? ", " : "."}
-              </span>
-            ))}
-          </p>
         </form>
 
         {exchange && (
@@ -110,13 +95,19 @@ export function GoalsPanel() {
           <PanelLoading rows={4} />
         ) : goals.isError && !goals.data ? (
           <PanelError what="your goals" onRetry={() => goals.refetch()} />
-        ) : goals.data.length === 0 ? (
+        ) : list.length === 0 && !pendingText ? (
           <p className="py-4 font-serif text-lg text-ink-2">No goals. The battery is run purely for profit until you add one.</p>
         ) : (
           <ul>
-            {goals.data.map((g) => (
+            {list.map((g) => (
               <GoalItem key={g.id} goal={g} onDelete={(id) => del.mutate(id)} deleting={del.isPending && del.variables === g.id} />
             ))}
+            {pendingText && (
+              <li className="grid gap-y-1.5 border-t border-rule py-5 first:border-t-0" aria-live="polite" aria-busy="true">
+                <p className="font-serif text-2xl leading-snug text-ink-2">{pendingText}</p>
+                <p className="text-sm text-ink-3">Reading your goal…</p>
+              </li>
+            )}
           </ul>
         )}
         {del.isError && <PanelError message="The goal could not be removed. Try again in a moment." />}

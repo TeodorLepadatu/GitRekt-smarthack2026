@@ -46,10 +46,11 @@ def wait_for(cond, timeout=5.0):
 
 
 def test_state_before_the_first_interval(setup):
-    _, c = setup
+    b, c = setup
     s = c.get("/api/state").json()
     assert s == {"capacity_mwh": 10.0, "max_power_mw": 3.0, "profit_today_eur": 0,
-                 "current": None, "sim": {"running": False, "speed": 0.0}}
+                 "current": None, "sim": {"running": False, "speed": 0.0, "day_over": False,
+                                          "date": b.date, "next_day": False}}
 
 
 def test_day_has_96_slots_decided_ones_first(setup):
@@ -133,6 +134,19 @@ def test_delete_goal_and_history_follows_the_goal_not_the_id(setup):
     assert c.delete("/api/goals/nope").status_code == 404
 
 
+def test_goal_list_is_right_before_the_worker_applies_a_change(setup):
+    """The runner gets a goal change between intervals; the list must not wait for it."""
+    b, c = setup
+    b.advance(4)
+    b._apply_pending = lambda: None                                  # the worker is busy deciding
+    assert c.delete("/api/goals/g1").status_code == 200              # the 6 MWh reserve
+    goals = c.get("/api/goals").json()
+    assert [(g["id"], g["type"]) for g in goals] == [("objective", "max_profit"), ("g1", "min_sell_price")]
+    assert "need_mwh" not in goals[1]                                # not the removed reserve's state
+    r = c.post("/api/goals", json={"text": "Keep 2 MWh backup overnight"}).json()
+    assert [g["id"] for g in r["goals"]] == ["objective", "g1", "g2"]
+
+
 def test_goal_tracker_keeps_history_when_ids_are_renumbered():
     g1 = {"id": "g1", "type": "reserve", "mwh": 6.0, "by": "18:00", "until": "18:00"}
     g2 = {"id": "g2", "type": "min_sell_price", "eur_per_mwh": 50}
@@ -145,9 +159,12 @@ def test_goal_tracker_keeps_history_when_ids_are_renumbered():
 
 def test_run_pause_and_day_end(setup):
     b, c = setup
-    assert c.post("/api/sim/run", json={"speed": 90000}).json() == {"running": True, "speed": 90000.0}
+    assert c.post("/api/sim/run", json={"speed": 90000}).json() == {"running": True, "speed": 90000.0,
+                                                                    "day_over": False, "date": b.date,
+                                                                    "next_day": False}
     assert wait_for(lambda: c.get("/api/day").json()["now"] == "23:45")      # 10 ms per interval
-    assert c.get("/api/state").json()["sim"] == {"running": False, "speed": 0.0}   # stops at the end of the day
+    sim = c.get("/api/state").json()["sim"]
+    assert (sim["running"], sim["speed"], sim["day_over"]) == (False, 0.0, True)   # stops at the end of the day
     goals = {g["id"]: g["status"] for g in c.get("/api/goals").json()}
     assert goals["g2"] in ("met", "violated")                                     # finalised at the end
 
@@ -165,7 +182,8 @@ def test_pause_stops_the_clock(setup):
 def test_reset_starts_the_day_again(setup):
     b, c = setup
     b.advance(8)
-    assert c.post("/api/sim/reset").json() == {"running": False, "speed": 0.0}
+    r = c.post("/api/sim/reset").json()
+    assert (r["running"], r["speed"], r["day_over"]) == (False, 0.0, False)
     assert c.get("/api/day").json()["now"] is None and c.get("/api/state").json()["current"] is None
     assert c.get("/api/metrics").json()["decisions_total"] == 0
 
@@ -310,3 +328,38 @@ def test_interval_shows_what_the_site_actually_did():
               "site": {"setpoint_applied_mw": 2.1082, "curtailed_mw": 5.58, "clipped": False}}
     assert interval_payload(record)["guard"]["curtail_mw"] == 5.58
     assert interval_payload({"guard": record["guard"]})["guard"]["curtail_mw"] == 4.19     # no site: the guard's
+
+
+def test_next_day_carries_the_stored_energy_and_runs():
+    from loop import demo_day
+    store = GoalStore(GoalParser(None))
+    store.set(GOALS)
+    built = []
+
+    def next_day(date):
+        built.append(date)
+        return demo_day(seed=len(built), date=date)
+
+    b = Backend(store, llm_call=llm_off, next_day=next_day)
+    b.date = "2026-11-06"
+    c = TestClient(create_app(b, heartbeat_s=0.2))
+    try:
+        b.advance(96)
+        sim = c.get("/api/state").json()["sim"]
+        assert sim["day_over"] and sim["next_day"] and sim["date"] == "2026-11-06"
+        stored = b._snap.stored_mwh
+        r = c.post("/api/sim/next-day", json={"speed": 0})
+        assert r.status_code == 200 and r.json()["date"] == "2026-11-07" and not r.json()["day_over"]
+        assert built == ["2026-11-07"] and b._snap.records == [] and b._snap.stored_mwh == stored
+        assert c.get("/api/day").json()["date"] == "2026-11-07"
+        assert c.get("/api/audit").json()[0]["action"] == "sim_next_day"
+    finally:
+        b.close()
+
+
+def test_next_day_errors_are_conflicts(setup):
+    b, c = setup
+    assert c.post("/api/sim/next-day", json={}).status_code == 409          # single-day backend
+    b.next_day_factory = lambda date: (_ for _ in ()).throw(RuntimeError("no prices"))
+    r = c.post("/api/sim/next-day", json={})
+    assert r.status_code == 409 and "no prices" in r.json()["detail"]

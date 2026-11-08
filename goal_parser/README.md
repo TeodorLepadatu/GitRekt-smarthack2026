@@ -74,7 +74,10 @@ an answer.
 
 `GoalStore` holds the goal sentences and the **active** config that the guard and prompt assembly
 use. A new set of sentences is activated only when nothing is unclear; while questions are open the
-previous config stays in force. The active config is saved to JSON and reloaded on start.
+previous config stays in force. Each sentence is parsed on its own and only once: `add()` parses
+just the new sentence and `remove()` parses nothing, so an older goal can never turn into a question
+or block a removal. `sentence_of(goal_id)` gives the sentence a goal came from. The active config
+and each sentence's parse are saved to JSON and reloaded on start.
 
 ```python
 from goal_parser import GoalParser, GoalStore
