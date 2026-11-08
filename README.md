@@ -1,6 +1,26 @@
 # GitRekt
 Smarthack 2026
 
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `backend/` | FastAPI app: REST + SSE for the dashboard (`python -m backend`) |
+| `frontend/` | React + Vite dashboard |
+| `loop/` | The clock: runs one simulated day, interval by interval |
+| `pipeline.py` | One decision, end to end: `feature_builder/` → `prompt_assembly/` → `llm/` → `validator/` → `guard/` |
+| `simulator/`, `settlement/` | The physics of the site, and the money, goal status and logs |
+| `goal_parser/` | Turns the operator's written goals into a `GoalConfig` |
+| `control/` | Manual override, emergency hold and the AI's autonomy level |
+| `dashboard/` | API payloads, matching `frontend/src/api/types.ts`; decision explanations and the day report |
+| `predictions/` | ML forecasts for demand, solar and wind, with their training data and models |
+| `price_api/` | Mock energy price API (`python -m price_api`) |
+| `battery.py`, `config.py`, `common.py` | The battery model, runtime settings, shared helpers |
+| `scripts/` | Data download (ENTSO-E), dataset build, synthetic market, plots, `run_app.*` launchers |
+| `data/`, `synthetic_out/` | Input data: ENTSO-E prices and load, synthetic imbalance prices |
+| `docs/` | The original plan and data plots |
+| `tests/` | All Python tests: `python -m pip install pytest; python -m pytest -q` |
+
 ## Pipeline
 
 What feeds the agent, and where its decisions end up.
