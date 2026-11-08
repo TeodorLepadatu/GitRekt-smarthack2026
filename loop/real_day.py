@@ -6,6 +6,7 @@ the three real feeds the project already has:
 
     predictions/models/*.pkl  ML 1 + ML 2  -> forecasts (with their 10-90 % band)
     data/energy_price.csv     ENTSO-E      -> day-ahead prices, already 15-min
+                                             (or the mock price API: ``price_api=URL``)
     predictions/dataset.csv   ENTSO-E      -> what really happened (the actuals)
 
     from loop import DayRunner, real_day
@@ -32,6 +33,7 @@ same way :func:`predictions.core.combine` builds the national one.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -43,6 +45,8 @@ from feature_builder import SiteForecast
 from settlement import ImbalancePrices
 
 from .day import DayInput, LoopError
+
+log = logging.getLogger(__name__)
 
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")  # same zone predictions/core.py builds its calendar in
 STEP_S = 15 * 60
@@ -319,6 +323,7 @@ def real_day(
     imbalance: bool = False,
     imbalance_path: Path | str = IMBALANCE_CSV,
     allow_fetch: bool = True,
+    price_api: Any = None,
 ) -> DayInput:
     """One real day at the site, ready for :class:`~loop.day.DayRunner`.
 
@@ -331,9 +336,15 @@ def real_day(
     ``imbalance=True`` charges for deviating from the promised grid position and
     lets the battery defend it (see :class:`~loop.day.DayInput`); it needs the
     actuals, since without a measurement there is no deviation.
+    ``price_api``: the mock price API's base URL (or an ``httpx.Client`` for it).
+    When set and ``prices`` is not given, both the day-ahead and the imbalance
+    prices come from the API; if it cannot be reached, from the CSV files.
     """
     stamps = day_timestamps(date)
-    curve = _prices_for(stamps, prices, prices_path, date)
+    if imbalance and not with_actuals:
+        raise RealDayError("imbalance needs the actuals: a forecast cannot deviate from itself")
+    fetched = _fetch_prices(date, stamps, price_api) if prices is None and price_api is not None else None
+    curve = fetched.day_ahead if fetched else _prices_for(stamps, prices, prices_path, date)
     # One copy of dataset.csv for the models and the actuals: it is read three
     # times otherwise, once per forecaster and once here.
     if data is None and not models:
@@ -344,9 +355,9 @@ def real_day(
     )
     actuals = site_actuals(stamps, scale=scale, data=data) if with_actuals else None
     imb = None
-    if imbalance:
-        if not with_actuals:
-            raise RealDayError("imbalance needs the actuals: a forecast cannot deviate from itself")
+    if imbalance and fetched:
+        imb = list(fetched.imbalance)
+    elif imbalance:
         table = load_imbalance_prices(imbalance_path)
         imb = [table.get(t) for t in stamps]
         if not any(x is not None for x in imb):
@@ -355,6 +366,23 @@ def real_day(
                 f"{_iso(min(table))} .. {_iso(max(table))}" if table else
                 f"{Path(imbalance_path)} holds no usable imbalance prices")
     return DayInput(prices=curve, forecasts=forecasts, actuals=actuals, date=date, imbalance=imb)
+
+
+def _fetch_prices(date: str, stamps: Sequence[int], api: Any):
+    """The day from the mock price API, or None (logged) to fall back to the CSVs."""
+    from price_api import PriceApiError, fetch_day
+
+    try:
+        day = fetch_day(date, api)
+    except PriceApiError as exc:
+        log.warning("%s; reading the price CSVs instead", exc)
+        return None
+    if list(day.timestamps) != list(stamps):
+        log.warning("price API returned other intervals than %s; reading the price CSVs instead", date)
+        return None
+    if day.synthetic:
+        log.info("prices for %s come partly or fully from the generator: %s", date, day.source)
+    return day
 
 
 def _prices_for(

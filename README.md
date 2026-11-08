@@ -258,6 +258,7 @@ the pair is clamped so deviating can never pay better than delivering the plan.
 |---|---|
 | `predictions/` | ML 1 + ML 2: demand and production forecasts (solar, wind, total) with 10–90 % ranges for any 15-min timestamp up to 7 days ahead; `DemandForecaster`, `ProductionForecaster` and an HTTP API (see `predictions/README.md`) |
 | `loop/` | The clock: one day, interval by interval. `demo_day()` makes a day up; `real_day()` builds one from the ML models and the real price file, scaled from national to site size by `SiteScale` |
+| `price_api/` | Mock energy price API: day-ahead + imbalance prices per 15 min, real where the CSVs cover the day, generated (seeded by date) where they do not; `real_day()` calls it when `PRICE_API_URL` is set (see `price_api/README.md`) |
 | `dashboard/` | The loop's objects as the shapes `frontend/src/api/types.ts` declares, so the API layer has nothing left to translate |
 | `backend/` | FastAPI: the dashboard's routes and the SSE stream, running the day loop on a worker thread |
 | `simulator/` | The site's physics: what the battery, the export limiter and the grid actually did in one interval |

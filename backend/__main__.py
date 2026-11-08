@@ -70,7 +70,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.date:
         def build(date: str):
-            return real_day(date, scale=SiteScale(), with_actuals=not args.plan, imbalance=args.imbalance)
+            return real_day(date, scale=SiteScale(), with_actuals=not args.plan, imbalance=args.imbalance,
+                            price_api=settings.price_api_url)
 
         try:  # built once: a reset replays the same day
             day = build(args.date)

@@ -31,6 +31,16 @@ services:
     volumes:
       - ollama-data:/root/.ollama
 
+  # Mock energy price API (price_api/): real ENTSO-E day-ahead + synth_market imbalance prices,
+  # generated ones for days the files do not cover. The backend falls back to the CSVs if it is down.
+  prices:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m price_api --host 0.0.0.0 --port 8100
+    expose:
+      - "8100"
+
   api:
     build:
       context: .
@@ -43,9 +53,12 @@ services:
       OLLAMA_HOST: http://ollama:11434
       ENERGY_AGENT_MODEL: ${ENERGY_AGENT_MODEL:-qwen3.5:4b}
       ENERGY_AGENT_GOAL_MODEL: ${ENERGY_AGENT_GOAL_MODEL:-qwen3.5:4b}
+      PRICE_API_URL: http://prices:8100
     depends_on:
       ollama-model:
         condition: service_completed_successfully
+      prices:
+        condition: service_started
     expose:
       - "8000"
 
