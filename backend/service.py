@@ -37,9 +37,8 @@ from dashboard.report import ai_summary, day_report
 from feature_builder import build_features
 from goal_parser import GoalStore
 from guard import guard
-from loop import DayInput, DayRunner, demo_day
-from loop.day import operator_decision
-from settlement.goals import _definition as goal_definition
+from loop import DayInput, DayRunner, demo_day, operator_decision
+from settlement import goal_definition
 from validator import fallback_decision
 
 from .desk import AlertBook, AuditLog, FlagBook, Overrides, alert_conditions, relaxed_sentence

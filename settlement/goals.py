@@ -33,7 +33,7 @@ TOL_MWH = 0.01  # rounding tolerance on stored energy
 FINAL = ("missed", "violated")
 
 
-def _definition(g: Mapping[str, Any]) -> tuple:
+def goal_definition(g: Mapping[str, Any]) -> tuple:
     """What a goal asks for, independent of its id."""
     return (g.get("type"), finite_float(g.get("mwh")), g.get("by"), g.get("until"), finite_float(g.get("eur_per_mwh")))
 
@@ -78,12 +78,12 @@ class GoalTracker:
         old_goals = self.goals
         # Match history by what a goal says, not by its id: the goal parser renumbers
         # g1, g2, ... whenever a goal is removed, so an id can come back as a different goal.
-        old = {_definition(g): self.states[str(g["id"])] for g in old_goals if str(g["id"]) in self.states}
+        old = {goal_definition(g): self.states[str(g["id"])] for g in old_goals if str(g["id"]) in self.states}
         self.goals = [g for g in goals if isinstance(g, Mapping) and g.get("id") is not None]
         self.states = {}
         for g in self.goals:
             gid = str(g["id"])
-            kept = old.get(_definition(g))
+            kept = old.get(goal_definition(g))
             if kept is not None:
                 kept.id = gid
             self.states[gid] = kept or GoalState(

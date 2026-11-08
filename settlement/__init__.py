@@ -7,7 +7,7 @@
     rec["profit_eur"], rec["goal_g1"], rec["dashboard_line"]; ledger.metrics()
 """
 
-from .goals import GoalState, GoalTracker
+from .goals import GoalState, GoalTracker, goal_definition
 from .ledger import DayLedger, goal_costs
 from .settle import (
     ImbalancePrices,
@@ -29,6 +29,7 @@ __all__ = [
     "imbalance_cost",
     "scheduled_position_mwh",
     "goal_costs",
+    "goal_definition",
     "settle",
     "settle_interval",
 ]
