@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     # A real day (ML forecasts + ENTSO-E prices); -Date "" runs the made-up demo day instead.
-    [string]$Date = "2026-11-06",
+    [string]$Date = "2026-09-28",
     [string]$Start = "00:00",
     [int]$BackendPort = 8001
 )

@@ -36,8 +36,9 @@ services:
       context: .
       dockerfile: Dockerfile
     # A real day: ML 1 + ML 2 forecasts and ENTSO-E prices, decided by the LLM agent.
-    # ENERGY_AGENT_DATE picks the day; the default is the last fully measured one.
-    command: python -m backend --host 0.0.0.0 --port 8000 --date ${ENERGY_AGENT_DATE:-2026-11-06}
+    # ENERGY_AGENT_DATE picks the day. The default, 2026-09-28, is the presentation day: near-free
+    # solar at midday (about EUR 9/MWh, 4-6 MW surplus) and an evening peak above EUR 300/MWh.
+    command: python -m backend --host 0.0.0.0 --port 8000 --date ${ENERGY_AGENT_DATE:-2026-09-28}
     environment:
       OLLAMA_HOST: http://ollama:11434
       ENERGY_AGENT_MODEL: ${ENERGY_AGENT_MODEL:-qwen3.5:4b}

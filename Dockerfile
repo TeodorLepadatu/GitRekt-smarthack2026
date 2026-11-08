@@ -12,4 +12,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "-m", "backend", "--host", "0.0.0.0", "--port", "8000"]
+# The presentation day by default (docker-compose.yml sets the same default via ENERGY_AGENT_DATE)
+CMD ["python", "-m", "backend", "--host", "0.0.0.0", "--port", "8000", "--date", "2026-09-28"]
